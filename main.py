@@ -2,9 +2,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.config import logger, settings
+from app.config import logger
 from app.database import close_pools, init_pools
-from app.routers import admin
+from app.routers import admin, twilio_status, twilio_stream, twilio_voice
 
 
 @asynccontextmanager
@@ -19,6 +19,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="korelabs_llamadas", lifespan=lifespan)
 
 app.include_router(admin.router)
+app.include_router(twilio_voice.router)
+app.include_router(twilio_status.router)
+app.include_router(twilio_stream.router)
 
 
 @app.get("/healthz")
