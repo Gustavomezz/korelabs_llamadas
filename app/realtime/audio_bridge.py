@@ -22,6 +22,10 @@ from app.ai.tools import ToolContext, execute_tool
 from app.config import logger
 from app.models.calls import insert_transcript
 from app.realtime.events import (
+    ASSISTANT_TRANSCRIPT_DELTA_EVENTS,
+    ASSISTANT_TRANSCRIPT_DONE_EVENTS,
+    AUDIO_DELTA_EVENTS,
+    USER_TRANSCRIPT_DONE_EVENTS,
     append_audio,
     function_call_output,
     twilio_clear_event,
@@ -55,6 +59,12 @@ class AudioBridge:
         # ha empezado a enviarse.
         self._response_active = False
         self._first_audio_delta_logged = False
+        # Acumulador de transcript del assistant. En gpt-realtime-2 el
+        # `.done` tarda mucho o no llega; por eso acumulamos cada delta y
+        # hacemos flush en `.done` o en `response.done` (lo que llegue
+        # primero). Indexed por response_id para soportar múltiples
+        # responses en la misma sesión sin mezclar texto.
+        self._assistant_transcript_buf: dict[str, str] = {}
 
     async def run(self) -> None:
         t1 = asyncio.create_task(self._pump_twilio_to_openai(), name="twilio->openai")
@@ -107,31 +117,45 @@ class AudioBridge:
                 if event_count == 1:
                     logger.info("openai first event call_id=%s type=%s", self.call_id, kind)
 
-                if kind == "response.audio.delta":
+                if kind in AUDIO_DELTA_EVENTS:
                     delta = event.get("delta")
                     if delta:
                         if not self._first_audio_delta_logged:
                             logger.info(
-                                "openai first audio.delta call_id=%s size=%d twilio_state=%s",
-                                self.call_id, len(delta), self.twilio.application_state.name,
+                                "openai first audio.delta call_id=%s type=%s size=%d twilio_state=%s",
+                                self.call_id, kind, len(delta), self.twilio.application_state.name,
                             )
                             self._first_audio_delta_logged = True
                         await self._send_twilio(twilio_media_event(self.stream_sid, delta))
                         self._frames_out += 1
                 elif kind == "response.created":
                     self._response_active = True
+                    rid = (event.get("response") or {}).get("id")
+                    if rid:
+                        self._assistant_transcript_buf[rid] = ""
                 elif kind == "response.done":
                     self._response_active = False
+                    rid = (event.get("response") or {}).get("id")
+                    await self._flush_assistant_transcript(rid)
                 elif kind == "input_audio_buffer.speech_started":
                     if self._response_active:
                         logger.info("barge-in: clearing twilio buffer call_id=%s", self.call_id)
                         await self._send_twilio(twilio_clear_event(self.stream_sid))
-                elif kind == "response.audio_transcript.done":
-                    transcript = (event.get("transcript") or "").strip()
-                    if transcript:
-                        logger.info("assistant said call_id=%s: %s", self.call_id, transcript[:120])
-                        await self._save_transcript("assistant", transcript)
-                elif kind == "conversation.item.input_audio_transcription.completed":
+                elif kind in ASSISTANT_TRANSCRIPT_DELTA_EVENTS:
+                    rid = event.get("response_id") or ""
+                    delta = event.get("delta") or ""
+                    if delta:
+                        self._assistant_transcript_buf[rid] = (
+                            self._assistant_transcript_buf.get(rid, "") + delta
+                        )
+                elif kind in ASSISTANT_TRANSCRIPT_DONE_EVENTS:
+                    rid = event.get("response_id") or ""
+                    final = (event.get("transcript") or self._assistant_transcript_buf.get(rid, "")).strip()
+                    if final:
+                        logger.info("assistant said call_id=%s: %s", self.call_id, final[:120])
+                        await self._save_transcript("assistant", final)
+                    self._assistant_transcript_buf.pop(rid, None)
+                elif kind in USER_TRANSCRIPT_DONE_EVENTS:
                     transcript = (event.get("transcript") or "").strip()
                     if transcript:
                         logger.info("user said call_id=%s: %s", self.call_id, transcript[:120])
@@ -208,6 +232,19 @@ class AudioBridge:
             await self.twilio.send_text(message)
         except Exception:
             logger.exception("failed to send to twilio call_id=%s", self.call_id)
+
+    async def _flush_assistant_transcript(self, response_id: str | None) -> None:
+        """
+        Persistir y borrar el buffer del assistant para un response_id dado.
+        Se invoca desde response.done como fallback si nunca llegó el evento
+        `.done` específico del transcript.
+        """
+        if not response_id:
+            return
+        text = (self._assistant_transcript_buf.pop(response_id, "") or "").strip()
+        if text:
+            logger.info("assistant said (flush) call_id=%s: %s", self.call_id, text[:120])
+            await self._save_transcript("assistant", text)
 
     async def _save_transcript(self, role: str, content: str) -> None:
         try:

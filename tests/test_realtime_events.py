@@ -4,6 +4,7 @@ from app.realtime.events import (
     append_audio,
     function_call_output,
     initial_response_create,
+    is_v2_model,
     session_update,
     twilio_clear_event,
     twilio_mark_event,
@@ -11,44 +12,103 @@ from app.realtime.events import (
 )
 
 
-def test_session_update_uses_g711_ulaw_end_to_end():
-    evt = session_update(instructions="hola")
+# ---------- detector v1/v2 ----------
+
+def test_is_v2_model_recognizes_v2_family():
+    assert is_v2_model("gpt-realtime-2") is True
+    assert is_v2_model("gpt-realtime-2.5") is True
+    assert is_v2_model("gpt-realtime-2-2026-05-07") is True
+    assert is_v2_model("gpt-realtime-3") is True
+
+
+def test_is_v2_model_treats_legacy_as_v1():
+    assert is_v2_model("gpt-realtime") is False
+    assert is_v2_model("gpt-realtime-1.5") is False
+    assert is_v2_model("gpt-realtime-mini") is False
+    assert is_v2_model("gpt-4o-realtime-preview") is False
+    assert is_v2_model("gpt-4o-realtime-preview-2024-12-17") is False
+    assert is_v2_model("") is False
+
+
+# ---------- session_update v2 ----------
+
+def test_session_update_v2_envelope():
+    evt = session_update(instructions="hola", model="gpt-realtime-2")
     s = evt["session"]
     assert evt["type"] == "session.update"
-    assert s["input_audio_format"] == "g711_ulaw"
-    assert s["output_audio_format"] == "g711_ulaw"
+    assert s["type"] == "realtime"
+    assert s["output_modalities"] == ["audio"]
     assert s["instructions"] == "hola"
-    assert s["voice"] == "cedar"
-    assert s["turn_detection"]["type"] == "server_vad"
-    assert s["turn_detection"]["threshold"] == 0.7
-    assert s["turn_detection"]["silence_duration_ms"] == 700
-    assert s["input_audio_transcription"]["model"] == "whisper-1"
-    assert "tools" not in s  # vacío -> no se incluye
+    # Audio anidado
+    assert s["audio"]["input"]["format"] == {"type": "audio/pcmu"}
+    assert s["audio"]["output"]["format"] == {"type": "audio/pcmu"}
+    assert s["audio"]["output"]["voice"] == "cedar"
+    assert s["audio"]["input"]["transcription"] == {"model": "whisper-1"}
+    td = s["audio"]["input"]["turn_detection"]
+    assert td["type"] == "server_vad"
+    assert td["threshold"] == 0.7
+    assert td["silence_duration_ms"] == 700
+    assert td["interrupt_response"] is True
+    # Reasoning effort por defecto low
+    assert s["reasoning"] == {"effort": "low"}
+    # NO debe haber campos del envelope viejo
+    assert "modalities" not in s
+    assert "input_audio_format" not in s
+    assert "output_audio_format" not in s
 
-def test_session_update_with_tools_and_overrides():
+
+def test_session_update_v2_with_tools():
     tools = [{"type": "function", "name": "ping", "parameters": {}}]
     evt = session_update(
-        instructions="x", voice="marin", temperature=0.6,
-        tools=tools, vad_threshold=0.4, vad_silence_ms=400, vad_prefix_ms=200,
+        instructions="x", model="gpt-realtime-2",
+        tools=tools, voice="marin", reasoning_effort="medium",
+    )
+    s = evt["session"]
+    assert s["audio"]["output"]["voice"] == "marin"
+    assert s["tools"] == tools
+    assert s["reasoning"]["effort"] == "medium"
+
+
+# ---------- session_update v1 (legacy) ----------
+
+def test_session_update_v1_envelope():
+    evt = session_update(instructions="hola", model="gpt-realtime")
+    s = evt["session"]
+    assert evt["type"] == "session.update"
+    assert "type" not in s  # v1 NO tiene session.type
+    assert s["modalities"] == ["audio", "text"]
+    assert s["voice"] == "cedar"
+    assert s["input_audio_format"] == "g711_ulaw"
+    assert s["output_audio_format"] == "g711_ulaw"
+    assert s["input_audio_transcription"] == {"model": "whisper-1"}
+    assert s["turn_detection"]["type"] == "server_vad"
+    assert s["turn_detection"]["threshold"] == 0.7
+    assert "audio" not in s
+    assert "output_modalities" not in s
+
+
+def test_session_update_v1_with_tools():
+    tools = [{"type": "function", "name": "ping", "parameters": {}}]
+    evt = session_update(
+        instructions="x", model="gpt-realtime", voice="marin",
+        temperature=0.6, tools=tools,
+        vad_threshold=0.4, vad_silence_ms=400, vad_prefix_ms=200,
     )
     s = evt["session"]
     assert s["voice"] == "marin"
     assert s["temperature"] == 0.6
     assert s["tools"] == tools
-    assert s["turn_detection"] == {
-        "type": "server_vad",
-        "threshold": 0.4,
-        "prefix_padding_ms": 200,
-        "silence_duration_ms": 400,
-        "create_response": True,
-    }
+    assert s["turn_detection"]["threshold"] == 0.4
+    assert s["turn_detection"]["silence_duration_ms"] == 400
+    assert s["turn_detection"]["prefix_padding_ms"] == 200
 
+
+# ---------- otros helpers (estables entre versiones) ----------
 
 def test_initial_response_create_with_hint():
     evt = initial_response_create("saluda")
     assert evt["type"] == "response.create"
     assert evt["response"]["instructions"] == "saluda"
-    assert "audio" in evt["response"]["modalities"]
 
 
 def test_initial_response_create_without_hint():
@@ -66,8 +126,7 @@ def test_function_call_output_serializes_dict():
     assert evt["type"] == "conversation.item.create"
     assert evt["item"]["type"] == "function_call_output"
     assert evt["item"]["call_id"] == "call_abc"
-    parsed = json.loads(evt["item"]["output"])
-    assert parsed == {"slots": [1, 2]}
+    assert json.loads(evt["item"]["output"]) == {"slots": [1, 2]}
 
 
 def test_function_call_output_passes_string():
@@ -77,8 +136,7 @@ def test_function_call_output_passes_string():
 
 def test_twilio_media_event_format():
     msg = twilio_media_event("MZ123", "abc=")
-    parsed = json.loads(msg)
-    assert parsed == {"event": "media", "streamSid": "MZ123", "media": {"payload": "abc="}}
+    assert json.loads(msg) == {"event": "media", "streamSid": "MZ123", "media": {"payload": "abc="}}
 
 
 def test_twilio_clear_and_mark():

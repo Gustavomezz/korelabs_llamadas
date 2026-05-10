@@ -1,15 +1,9 @@
 """
 Cliente WebSocket a OpenAI Realtime API.
 
-Responsabilidades:
-- Abrir la WS con el header de auth.
-- Mandar `session.update` inicial + `response.create` para que el bot salude.
-- Exponer `send(event_dict)` y `events()` (async iterator) para que el bridge
-  haga el pump.
-- Cerrar limpio al salir.
-
-NO toca audio de Twilio ni la BD: eso es responsabilidad del bridge. Esta
-clase es estricta pump de eventos de OpenAI.
+Auth: solo `Authorization: Bearer ...`. Para gpt-realtime-2 NO se manda
+`OpenAI-Beta: realtime=v1` (rompe el handshake con `invalid_model`). Para
+modelos legacy v1 sí se manda — events.is_v2_model decide.
 """
 import json
 from contextlib import asynccontextmanager
@@ -19,7 +13,7 @@ import websockets
 from websockets.asyncio.client import ClientConnection
 
 from app.config import logger, settings
-from app.realtime.events import initial_response_create, session_update
+from app.realtime.events import initial_response_create, is_v2_model, session_update
 
 OPENAI_REALTIME_URL_TEMPLATE = "wss://api.openai.com/v1/realtime?model={model}"
 
@@ -34,7 +28,6 @@ class OpenAISession:
     async def events(self) -> AsyncIterator[dict]:
         async for raw in self._ws:
             if isinstance(raw, bytes):
-                # Realtime no manda binarios pero por defensa lo decodificamos.
                 raw = raw.decode("utf-8", errors="ignore")
             try:
                 yield json.loads(raw)
@@ -63,15 +56,15 @@ async def open_session(
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY not configured")
 
-    url = OPENAI_REALTIME_URL_TEMPLATE.format(model=settings.openai_realtime_model)
-    headers = {
-        "Authorization": f"Bearer {settings.openai_api_key}",
-        "OpenAI-Beta": "realtime=v1",
-    }
+    model = settings.openai_realtime_model
+    url = OPENAI_REALTIME_URL_TEMPLATE.format(model=model)
+    headers = {"Authorization": f"Bearer {settings.openai_api_key}"}
+    # El header beta es requerido por v1 y prohibido por v2. Sin `realtime=v1`
+    # los modelos viejos rechazan; CON ese header los nuevos rechazan.
+    if not is_v2_model(model):
+        headers["OpenAI-Beta"] = "realtime=v1"
 
-    logger.info("openai realtime: connecting model=%s", settings.openai_realtime_model)
-    # max_size=None: los frames de audio en base64 pueden ser grandes; sin tope
-    # el cliente no rechaza por tamaño y mantenemos latencia baja.
+    logger.info("openai realtime: connecting model=%s v2=%s", model, is_v2_model(model))
     async with websockets.connect(
         url,
         additional_headers=headers,
@@ -82,7 +75,12 @@ async def open_session(
     ) as ws:
         logger.info("openai realtime: ws connected")
         session = OpenAISession(ws)
-        await session.send(session_update(instructions=instructions, voice=voice, tools=tools or []))
+        await session.send(session_update(
+            instructions=instructions,
+            model=model,
+            voice=voice,
+            tools=tools or [],
+        ))
         logger.info("openai realtime: session.update sent (instructions=%d chars, voice=%s)", len(instructions), voice)
         await session.send(initial_response_create(greeting_hint))
         logger.info("openai realtime: greeting response.create sent")

@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     openai_api_key: str = ""
-    openai_realtime_model: str = "gpt-realtime"
+    openai_realtime_model: str = "gpt-realtime-2"
 
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
