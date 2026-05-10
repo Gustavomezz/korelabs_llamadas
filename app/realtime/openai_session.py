@@ -131,6 +131,9 @@ def _build_session_payloads(
         reasoning_effort=settings.openai_reasoning_effort,
         vad_type=settings.realtime_vad_type,
         vad_eagerness=settings.realtime_vad_eagerness,
+        vad_threshold=settings.realtime_vad_threshold,
+        vad_silence_ms=settings.realtime_vad_silence_ms,
+        vad_prefix_ms=settings.realtime_vad_prefix_ms,
         prompt_id=prompt_id,
     )
     return update, build_greeting_events_openai(greeting_hint), chosen_voice

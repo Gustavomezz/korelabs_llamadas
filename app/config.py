@@ -30,13 +30,21 @@ class Settings(BaseSettings):
     # 'medium' | 'high' | 'xhigh'. Default minimal: ahorra ~450ms en
     # tiempo a primer audio comparado con 'low'.
     openai_reasoning_effort: str = "minimal"
-    # 'semantic_vad' es más robusto a eco/ruido y no dispara barge-in falso
-    # en línea telefónica. 'server_vad' es más rápido a detectar fin de turno
-    # pero ladra a cualquier ráfaga.
-    realtime_vad_type: str = "semantic_vad"
-    # Solo aplica a semantic_vad: low|medium|high. high responde más rápido
-    # cuando el usuario termina (max 2s timeout vs 8s en low).
+    # 'server_vad' detecta fin de turno por silencio en ms (configurable
+    # abajo). 'semantic_vad' usa modelo NLU pero tiene timeout mínimo ~1-2s
+    # incluso con eagerness=high. Para baja latencia preferimos server_vad
+    # con threshold alto (anti-eco) + silence corto (~300ms) — corta turnos
+    # 700-1700 ms más rápido que semantic_vad.
+    realtime_vad_type: str = "server_vad"
+    # Solo aplica a semantic_vad: low|medium|high.
     realtime_vad_eagerness: str = "high"
+    # Solo aplica a server_vad. Threshold alto evita ladrar por ruido de línea
+    # telefónica. silence_duration_ms es el principal driver de latencia
+    # turn-by-turn (cuánto silencio espera para asumir que el caller terminó).
+    # prefix_padding_ms es cuánto audio "antes" incluye en el buffer.
+    realtime_vad_threshold: float = 0.85
+    realtime_vad_silence_ms: int = 300
+    realtime_vad_prefix_ms: int = 200
     # ms mínimos de audio enviado antes de respetar un evento de barge-in.
     # Sirve de guard contra eco inmediato del bot que la VAD detecta como
     # speech del caller. 500ms es un punto seguro empíricamente.

@@ -44,10 +44,12 @@ def test_session_update_v2_envelope_defaults():
     assert s["audio"]["output"]["format"] == {"type": "audio/pcmu"}
     assert s["audio"]["output"]["voice"] == "cedar"
     assert s["audio"]["input"]["transcription"] == {"model": "whisper-1"}
-    # Default semantic_vad eagerness=high (mejor para teléfono)
+    # Default ahora server_vad con threshold alto + silence corto (latencia mínima).
     td = s["audio"]["input"]["turn_detection"]
-    assert td["type"] == "semantic_vad"
-    assert td["eagerness"] == "high"
+    assert td["type"] == "server_vad"
+    assert td["threshold"] == 0.85
+    assert td["silence_duration_ms"] == 300
+    assert td["prefix_padding_ms"] == 200
     assert td["interrupt_response"] is True
     # noise_reduction near_field por defecto (anti-eco línea telefónica)
     assert s["audio"]["input"]["noise_reduction"] == {"type": "near_field"}
@@ -59,15 +61,27 @@ def test_session_update_v2_envelope_defaults():
     assert "output_audio_format" not in s
 
 
-def test_session_update_v2_can_use_server_vad_explicit():
+def test_session_update_v2_can_use_semantic_vad_explicit():
     evt = session_update(
         instructions="x", model="gpt-realtime-2",
-        vad_type="server_vad", vad_threshold=0.85, vad_silence_ms=600,
+        vad_type="semantic_vad", vad_eagerness="high",
+    )
+    td = evt["session"]["audio"]["input"]["turn_detection"]
+    assert td["type"] == "semantic_vad"
+    assert td["eagerness"] == "high"
+
+
+def test_session_update_v2_aggressive_vad_for_low_latency():
+    """Configuración recomendada para latencia mínima turn-by-turn."""
+    evt = session_update(
+        instructions="x", model="gpt-realtime-2",
+        vad_type="server_vad", vad_threshold=0.85, vad_silence_ms=300, vad_prefix_ms=200,
     )
     td = evt["session"]["audio"]["input"]["turn_detection"]
     assert td["type"] == "server_vad"
     assert td["threshold"] == 0.85
-    assert td["silence_duration_ms"] == 600
+    assert td["silence_duration_ms"] == 300
+    assert td["prefix_padding_ms"] == 200
 
 
 def test_session_update_v2_can_disable_noise_reduction():
@@ -134,7 +148,7 @@ def test_session_update_v1_envelope():
     assert s["output_audio_format"] == "g711_ulaw"
     assert s["input_audio_transcription"] == {"model": "whisper-1"}
     assert s["turn_detection"]["type"] == "server_vad"
-    assert s["turn_detection"]["threshold"] == 0.7
+    assert s["turn_detection"]["threshold"] == 0.85
     assert "audio" not in s
     assert "output_modalities" not in s
 
