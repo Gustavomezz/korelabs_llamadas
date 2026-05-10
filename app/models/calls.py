@@ -85,6 +85,39 @@ async def update_call_status(
         )
 
 
+async def get_call_id_by_sid(pool: asyncpg.Pool, call_sid: str) -> Optional[int]:
+    async with pool.acquire() as conn:
+        return await conn.fetchval("SELECT id FROM calls WHERE call_sid = $1", call_sid)
+
+
+async def insert_transcript(
+    pool: asyncpg.Pool,
+    *,
+    call_id: int,
+    role: str,
+    content: str,
+    tool_name: Optional[str] = None,
+    tool_args: Optional[dict] = None,
+    tool_result: Optional[dict] = None,
+    audio_offset_ms: Optional[int] = None,
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO call_transcripts
+                (call_id, role, content, tool_name, tool_args, tool_result, audio_offset_ms)
+            VALUES ($1, $2::varchar, $3, $4::varchar, $5::jsonb, $6::jsonb, $7::integer)
+            """,
+            call_id,
+            role,
+            content,
+            tool_name,
+            _json(tool_args) if tool_args is not None else None,
+            _json(tool_result) if tool_result is not None else None,
+            audio_offset_ms,
+        )
+
+
 def _json(value: dict) -> str:
     import json
     return json.dumps(value, default=str)
