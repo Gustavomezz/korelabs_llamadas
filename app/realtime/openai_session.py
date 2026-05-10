@@ -80,6 +80,9 @@ async def open_session(
             model=model,
             voice=voice,
             tools=tools or [],
+            reasoning_effort=settings.openai_reasoning_effort,
+            vad_type=settings.realtime_vad_type,
+            vad_eagerness=settings.realtime_vad_eagerness,
         ))
         logger.info("openai realtime: session.update sent (instructions=%d chars, voice=%s)", len(instructions), voice)
         await session.send(initial_response_create(greeting_hint))

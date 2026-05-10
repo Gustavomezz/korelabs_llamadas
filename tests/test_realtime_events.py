@@ -32,7 +32,7 @@ def test_is_v2_model_treats_legacy_as_v1():
 
 # ---------- session_update v2 ----------
 
-def test_session_update_v2_envelope():
+def test_session_update_v2_envelope_defaults():
     evt = session_update(instructions="hola", model="gpt-realtime-2")
     s = evt["session"]
     assert evt["type"] == "session.update"
@@ -44,17 +44,40 @@ def test_session_update_v2_envelope():
     assert s["audio"]["output"]["format"] == {"type": "audio/pcmu"}
     assert s["audio"]["output"]["voice"] == "cedar"
     assert s["audio"]["input"]["transcription"] == {"model": "whisper-1"}
+    # Default semantic_vad eagerness=high (mejor para teléfono)
     td = s["audio"]["input"]["turn_detection"]
-    assert td["type"] == "server_vad"
-    assert td["threshold"] == 0.7
-    assert td["silence_duration_ms"] == 700
+    assert td["type"] == "semantic_vad"
+    assert td["eagerness"] == "high"
     assert td["interrupt_response"] is True
-    # Reasoning effort por defecto low
-    assert s["reasoning"] == {"effort": "low"}
+    # noise_reduction near_field por defecto (anti-eco línea telefónica)
+    assert s["audio"]["input"]["noise_reduction"] == {"type": "near_field"}
+    # Default reasoning_effort 'minimal' (latencia mínima)
+    assert s["reasoning"] == {"effort": "minimal"}
     # NO debe haber campos del envelope viejo
     assert "modalities" not in s
     assert "input_audio_format" not in s
     assert "output_audio_format" not in s
+
+
+def test_session_update_v2_can_use_server_vad_explicit():
+    evt = session_update(
+        instructions="x", model="gpt-realtime-2",
+        vad_type="server_vad", vad_threshold=0.85, vad_silence_ms=600,
+    )
+    td = evt["session"]["audio"]["input"]["turn_detection"]
+    assert td["type"] == "server_vad"
+    assert td["threshold"] == 0.85
+    assert td["silence_duration_ms"] == 600
+
+
+def test_session_update_v2_can_disable_noise_reduction():
+    evt = session_update(instructions="x", model="gpt-realtime-2", noise_reduction=None)
+    assert "noise_reduction" not in evt["session"]["audio"]["input"]
+
+
+def test_session_update_v2_can_change_reasoning_effort():
+    evt = session_update(instructions="x", model="gpt-realtime-2", reasoning_effort="medium")
+    assert evt["session"]["reasoning"]["effort"] == "medium"
 
 
 def test_session_update_v2_with_tools():

@@ -14,6 +14,21 @@ class Settings(BaseSettings):
 
     openai_api_key: str = ""
     openai_realtime_model: str = "gpt-realtime-2"
+    # 'minimal' (más rápido, suficiente para calificación de leads) | 'low' |
+    # 'medium' | 'high' | 'xhigh'. Default minimal: ahorra ~450ms en
+    # tiempo a primer audio comparado con 'low'.
+    openai_reasoning_effort: str = "minimal"
+    # 'semantic_vad' es más robusto a eco/ruido y no dispara barge-in falso
+    # en línea telefónica. 'server_vad' es más rápido a detectar fin de turno
+    # pero ladra a cualquier ráfaga.
+    realtime_vad_type: str = "semantic_vad"
+    # Solo aplica a semantic_vad: low|medium|high. high responde más rápido
+    # cuando el usuario termina (max 2s timeout vs 8s en low).
+    realtime_vad_eagerness: str = "high"
+    # ms mínimos de audio enviado antes de respetar un evento de barge-in.
+    # Sirve de guard contra eco inmediato del bot que la VAD detecta como
+    # speech del caller. 500ms es un punto seguro empíricamente.
+    barge_in_guard_ms: int = 500
 
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""

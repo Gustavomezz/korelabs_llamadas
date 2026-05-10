@@ -13,13 +13,14 @@ error fatal), la otra se cancela y `run` retorna.
 """
 import asyncio
 import json
+import time
 
 import asyncpg
 from fastapi import WebSocket
 from fastapi.websockets import WebSocketState
 
 from app.ai.tools import ToolContext, execute_tool
-from app.config import logger
+from app.config import logger, settings
 from app.models.calls import insert_transcript
 from app.realtime.events import (
     ASSISTANT_TRANSCRIPT_DELTA_EVENTS,
@@ -59,11 +60,14 @@ class AudioBridge:
         # ha empezado a enviarse.
         self._response_active = False
         self._first_audio_delta_logged = False
-        # Acumulador de transcript del assistant. En gpt-realtime-2 el
-        # `.done` tarda mucho o no llega; por eso acumulamos cada delta y
-        # hacemos flush en `.done` o en `response.done` (lo que llegue
-        # primero). Indexed por response_id para soportar múltiples
-        # responses en la misma sesión sin mezclar texto.
+        # ms desde que la response actual empezó a producir audio. Usamos esto
+        # para suprimir barge-in muy temprano (probable eco del propio bot
+        # rebotando en la línea telefónica), guard configurable via
+        # settings.barge_in_guard_ms.
+        self._response_audio_started_at: float | None = None
+        # Acumulador de transcript del assistant. En gpt-realtime-2 el `.done`
+        # tarda o no llega; acumulamos deltas y flusheamos en `.done` o en
+        # `response.done` (lo que llegue primero). Indexed por response_id.
         self._assistant_transcript_buf: dict[str, str] = {}
 
     async def run(self) -> None:
@@ -126,19 +130,38 @@ class AudioBridge:
                                 self.call_id, kind, len(delta), self.twilio.application_state.name,
                             )
                             self._first_audio_delta_logged = True
+                        if self._response_audio_started_at is None:
+                            self._response_audio_started_at = time.monotonic()
                         await self._send_twilio(twilio_media_event(self.stream_sid, delta))
                         self._frames_out += 1
                 elif kind == "response.created":
                     self._response_active = True
+                    self._response_audio_started_at = None
                     rid = (event.get("response") or {}).get("id")
                     if rid:
                         self._assistant_transcript_buf[rid] = ""
                 elif kind == "response.done":
                     self._response_active = False
+                    self._response_audio_started_at = None
                     rid = (event.get("response") or {}).get("id")
                     await self._flush_assistant_transcript(rid)
                 elif kind == "input_audio_buffer.speech_started":
-                    if self._response_active:
+                    # Sólo respetar barge-in si: (1) hay respuesta activa,
+                    # (2) ya pasaron al menos `barge_in_guard_ms` desde el
+                    # primer audio enviado. El segundo guard previene que
+                    # el eco del bot en la línea telefónica se confunda
+                    # con que el caller está hablando.
+                    if not self._response_active:
+                        pass
+                    elif (
+                        self._response_audio_started_at is None
+                        or (time.monotonic() - self._response_audio_started_at) * 1000 < settings.barge_in_guard_ms
+                    ):
+                        logger.debug(
+                            "barge-in suppressed (within guard) call_id=%s",
+                            self.call_id,
+                        )
+                    else:
                         logger.info("barge-in: clearing twilio buffer call_id=%s", self.call_id)
                         await self._send_twilio(twilio_clear_event(self.stream_sid))
                 elif kind in ASSISTANT_TRANSCRIPT_DELTA_EVENTS:

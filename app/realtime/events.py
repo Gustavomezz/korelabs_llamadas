@@ -3,32 +3,45 @@ Helpers puros para construir/parsear los eventos de OpenAI Realtime y Twilio
 Media Streams. Sin I/O — fáciles de testear.
 
 OpenAI tiene dos versiones de envelope incompatibles:
-- v1: usado por `gpt-realtime`, `gpt-realtime-1.5`, `gpt-4o-realtime-preview-*`.
-  Header `OpenAI-Beta: realtime=v1`. Campos planos. Eventos
+- v1 (`gpt-realtime`, `gpt-realtime-1.5`, `gpt-4o-realtime-preview-*`):
+  header `OpenAI-Beta: realtime=v1`. Campos planos. Eventos
   `response.audio.delta`, `response.audio_transcript.done`.
-- v2: usado por `gpt-realtime-2` y posteriores (lanzado 2026-05-07).
-  SIN header beta. `session.type: "realtime"` requerido. Campos de audio
-  anidados bajo `audio.input` / `audio.output`. Eventos
-  `response.output_audio.delta`, `response.output_audio_transcript.done`.
+- v2 (`gpt-realtime-2` y posteriores): SIN header beta.
+  `session.type: "realtime"` requerido. Audio anidado en
+  `audio.input/audio.output`. Eventos `response.output_audio.delta`,
+  `response.output_audio_transcript.done`. Soporta `reasoning.effort`,
+  `semantic_vad`, `noise_reduction`.
 
-Detectamos automáticamente la versión por el nombre del modelo y construimos
-el envelope correcto. Los handlers del bridge aceptan ambos nombres de
-evento para que el cambio de modelo no rompa el código.
-
-Referencia: ver memoria openai_realtime_v2_breaking_changes para la tabla
-completa de cambios entre versiones.
+Ver memoria openai_realtime_v2_breaking_changes para la tabla completa.
 """
 import json
 from typing import Any, Iterable
 
 
 def is_v2_model(model: str) -> bool:
-    """gpt-realtime-2, gpt-realtime-2.5, etc. usan el envelope nuevo.
-    gpt-realtime, gpt-realtime-1.5, gpt-4o-realtime-* usan el viejo."""
     name = (model or "").lower()
-    if name.startswith("gpt-realtime-2") or name.startswith("gpt-realtime-3"):
-        return True
-    return False
+    return name.startswith("gpt-realtime-2") or name.startswith("gpt-realtime-3")
+
+
+def _build_turn_detection_v2(vad_type: str, eagerness: str, threshold: float, prefix_ms: int, silence_ms: int) -> dict:
+    """semantic_vad: usa modelo de NLU para decidir fin de turno (mejor para
+    teléfono, evita barge-in falso). server_vad: VAD basada en energía,
+    más rápida pero más ruidosa."""
+    if vad_type == "semantic_vad":
+        return {
+            "type": "semantic_vad",
+            "eagerness": eagerness,
+            "create_response": True,
+            "interrupt_response": True,
+        }
+    return {
+        "type": "server_vad",
+        "threshold": threshold,
+        "prefix_padding_ms": prefix_ms,
+        "silence_duration_ms": silence_ms,
+        "create_response": True,
+        "interrupt_response": True,
+    }
 
 
 def session_update(
@@ -41,31 +54,34 @@ def session_update(
     vad_threshold: float = 0.7,
     vad_silence_ms: int = 700,
     vad_prefix_ms: int = 300,
-    reasoning_effort: str = "low",
+    reasoning_effort: str = "minimal",
+    vad_type: str = "semantic_vad",
+    vad_eagerness: str = "high",
+    noise_reduction: str | None = "near_field",
 ) -> dict:
     """
     Construye `session.update` para Realtime. Audio g711 µ-law end-to-end
-    (lo que manda Twilio), VAD server-side, transcripción del usuario con
-    whisper-1.
+    (lo que manda Twilio), VAD, transcripción del usuario con whisper-1.
     """
     if is_v2_model(model):
+        audio_input: dict[str, Any] = {
+            "format": {"type": "audio/pcmu"},
+            "turn_detection": _build_turn_detection_v2(
+                vad_type, vad_eagerness, vad_threshold, vad_prefix_ms, vad_silence_ms,
+            ),
+            "transcription": {"model": "whisper-1"},
+        }
+        if noise_reduction:
+            # 'near_field' está pensado para mic cercano (auriculares, teléfono).
+            # 'far_field' para conferencia con mic en mesa.
+            audio_input["noise_reduction"] = {"type": noise_reduction}
+
         session: dict[str, Any] = {
             "type": "realtime",
             "instructions": instructions,
             "output_modalities": ["audio"],
             "audio": {
-                "input": {
-                    "format": {"type": "audio/pcmu"},
-                    "turn_detection": {
-                        "type": "server_vad",
-                        "threshold": vad_threshold,
-                        "prefix_padding_ms": vad_prefix_ms,
-                        "silence_duration_ms": vad_silence_ms,
-                        "create_response": True,
-                        "interrupt_response": True,
-                    },
-                    "transcription": {"model": "whisper-1"},
-                },
+                "input": audio_input,
                 "output": {
                     "format": {"type": "audio/pcmu"},
                     "voice": voice,
@@ -74,15 +90,15 @@ def session_update(
             },
             "tool_choice": "auto",
         }
-        # reasoning.effort es opcional; "low" minimiza latencia y costo,
-        # "medium"/"high" para consultas más complejas.
         if reasoning_effort:
+            # minimal | low | medium | high | xhigh. minimal recomendado para
+            # voz de baja latencia con tareas simples (calificación, lookup).
             session["reasoning"] = {"effort": reasoning_effort}
         if tools:
             session["tools"] = list(tools)
         return {"type": "session.update", "session": session}
 
-    # Envelope v1 (legacy): para gpt-realtime, gpt-realtime-1.5, etc.
+    # Envelope v1 (legacy)
     session = {
         "modalities": ["audio", "text"],
         "instructions": instructions,
@@ -106,10 +122,6 @@ def session_update(
 
 
 def initial_response_create(greeting_hint: str | None = None) -> dict:
-    """
-    Fuerza al modelo a hablar primero (saludo). Sin esto, OpenAI espera input
-    de audio del usuario y la llamada queda en silencio.
-    """
     payload: dict[str, Any] = {"type": "response.create"}
     if greeting_hint:
         payload["response"] = {"instructions": greeting_hint}
@@ -117,12 +129,10 @@ def initial_response_create(greeting_hint: str | None = None) -> dict:
 
 
 def append_audio(payload_b64: str) -> dict:
-    """`media.payload` de Twilio ya viene en base64 µ-law: pasa directo."""
     return {"type": "input_audio_buffer.append", "audio": payload_b64}
 
 
 def function_call_output(call_id: str, output: Any) -> dict:
-    """Devuelve resultado de una tool al modelo."""
     return {
         "type": "conversation.item.create",
         "item": {
@@ -133,8 +143,7 @@ def function_call_output(call_id: str, output: Any) -> dict:
     }
 
 
-# Tipos de evento de OpenAI cuyos nombres cambiaron entre v1 y v2. Los
-# handlers del bridge aceptan ambos para no romper si se cambia el modelo.
+# Tipos de evento que cambian de nombre entre v1 y v2; los handlers aceptan ambos.
 AUDIO_DELTA_EVENTS = ("response.audio.delta", "response.output_audio.delta")
 ASSISTANT_TRANSCRIPT_DELTA_EVENTS = (
     "response.audio_transcript.delta",
