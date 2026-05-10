@@ -18,13 +18,12 @@ class Settings(BaseSettings):
     voice_provider: str = "openai"
 
     openai_api_key: str = ""
-    # Default 'gpt-realtime-mini': benchmark real mostró 448ms median
-    # session→audio vs 558ms de gpt-realtime-2 (110ms más rápido) y 5x más
-    # barato. Para vender Korelabs (calificación + agendamiento) la
-    # capacidad de razonamiento de v2 no es necesaria; mini la cubre
-    # con sobra. Para casos que necesiten más razonamiento subir a
-    # 'gpt-realtime-2'.
-    openai_realtime_model: str = "gpt-realtime-mini"
+    # gpt-realtime-2: modelo más capaz de OpenAI (GPT-5-class reasoning).
+    # ~110 ms más lento que gpt-realtime-mini en cold start pero MUCHO mejor
+    # razonamiento e instruction-following. Compensamos con todas las
+    # optimizaciones de abajo (pool pre-warm, server_vad agresivo,
+    # max_output_tokens, prompt server-stored, preambles).
+    openai_realtime_model: str = "gpt-realtime-2"
 
     # Grok / xAI. Solo se usan si voice_provider='grok'.
     xai_api_key: str = ""
