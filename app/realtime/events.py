@@ -138,6 +138,11 @@ def initial_response_create(greeting_hint: str | None = None) -> dict:
     return payload
 
 
+def build_greeting_events_openai(greeting_hint: str | None) -> list[dict]:
+    """OpenAI v1 y v2 aceptan response.create con instructions directo."""
+    return [initial_response_create(greeting_hint)]
+
+
 def append_audio(payload_b64: str) -> dict:
     return {"type": "input_audio_buffer.append", "audio": payload_b64}
 

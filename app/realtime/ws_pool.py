@@ -1,26 +1,15 @@
 """
-Pool de WebSockets pre-conectadas a OpenAI Realtime.
+Pool de WebSockets pre-conectadas al proveedor de Realtime activo.
 
-Una conexión fresca a `wss://api.openai.com/v1/realtime` cuesta ~500 ms
-(TCP + TLS handshake + WebSocket upgrade). Si abrimos esa WS en cold start
-de cada llamada, ese tiempo se suma al cold start total. Manteniendo N
-conexiones idle pre-conectadas, al llegar la llamada solo agarramos una
-del pool y vamos directo a `session.update` + `response.create`.
+Una conexión fresca cuesta ~500 ms (TCP+TLS+upgrade). Manteniendo N idle
+pre-conectadas saltamos ese costo en cold start de cada llamada.
 
-Diseño:
-- Target size configurable (default 2). Cada vez que se consume una, se
-  lanza una task background para reponer.
-- Las WS son one-shot: una vez asignadas a una llamada, se cierran al
-  terminar — NO regresan al pool, porque la sesión Realtime es stateful
-  (conversation history, tools, etc.) y mezclar conversaciones rompería
-  todo.
-- Si el pool está vacío al hacer `acquire`, hacemos cold start como
-  fallback (no se rompe la llamada, solo no hay ahorro).
-- Healthcheck: antes de devolver una WS, verificamos que sigue abierta;
-  si OpenAI la cerró por idle, descartamos y abrimos otra.
-- Sólo cubre el handshake. El `session.update` con el prompt sigue
-  haciéndose por llamada porque el voice_prompt depende del tenant y
-  pre-cachearlo por tenant complica el código sin gran ganancia hoy.
+One-shot: una vez asignada a una llamada, NO regresa al pool — la sesión es
+stateful y reusarla mezclaría conversaciones. Se descarta al final.
+
+Provider-agnostic: las WS se abren contra el provider activo (settings).
+Si cambias de provider en runtime, hay que recrear el pool — no soportado
+hoy (cambio de provider requiere restart del servicio).
 """
 import asyncio
 
@@ -31,11 +20,6 @@ from app.config import logger, settings
 
 
 class RealtimeWSPool:
-    """
-    Mantiene un pool de ClientConnection pre-conectadas a OpenAI Realtime.
-    Thread-safe via asyncio.Queue.
-    """
-
     def __init__(self, target_size: int = 2):
         self.target_size = target_size
         self._available: asyncio.Queue[ClientConnection] = asyncio.Queue()
@@ -44,22 +28,18 @@ class RealtimeWSPool:
         self._refill_lock = asyncio.Lock()
 
     async def start(self) -> None:
-        """Llamado en lifespan startup. Lanza warm de target_size conexiones."""
-        if not settings.openai_api_key:
-            logger.warning("ws pool: OPENAI_API_KEY no configurada, pool deshabilitado")
+        # Validamos que el provider activo tenga API key configurada antes
+        # de pre-conectar (evita tareas que loopean errores).
+        if not _provider_ready():
+            logger.warning("ws pool: provider %s sin API key, pool deshabilitado",
+                           settings.voice_provider)
             return
         for _ in range(self.target_size):
             asyncio.create_task(self._warm_one())
-        logger.info("ws pool: starting target_size=%d", self.target_size)
+        logger.info("ws pool: starting target_size=%d provider=%s",
+                    self.target_size, settings.voice_provider)
 
     async def acquire(self) -> ClientConnection:
-        """
-        Devuelve una WS pre-conectada (o nueva en cold start si pool vacío).
-        Lanza task background para reponer el pool.
-        Si la WS del pool está cerrada (idle timeout de OpenAI), descarta
-        y reintenta.
-        """
-        # Drenar conexiones cerradas hasta encontrar una sana o agotar el pool.
         while True:
             try:
                 ws = self._available.get_nowait()
@@ -69,20 +49,17 @@ class RealtimeWSPool:
                 return await self._open_fresh()
 
             if getattr(ws, "state", None) and ws.state.name == "OPEN":
-                qsize = self._available.qsize()
-                logger.info("ws pool: acquired warm conn (remaining=%d)", qsize)
+                logger.info("ws pool: acquired warm conn (remaining=%d)",
+                            self._available.qsize())
                 self._spawn_refill()
                 return ws
-            # Cerrada o degradada: descartar y seguir.
             logger.info("ws pool: discarded stale conn")
             try:
                 await ws.close()
             except Exception:
                 pass
-            # Loop continúa para intentar siguiente o caer en QueueEmpty.
 
     async def shutdown(self) -> None:
-        """Cierra todas las WS del pool. Llamar en lifespan shutdown."""
         self._closing = True
         while not self._available.empty():
             try:
@@ -95,7 +72,6 @@ class RealtimeWSPool:
     # --- internals ---------------------------------------------------------
 
     def _spawn_refill(self) -> None:
-        """Si el pool quedó por debajo del target, lanzar tasks para llenar."""
         if self._closing:
             return
         deficit = self.target_size - self._available.qsize() - self._refill_inflight
@@ -103,7 +79,6 @@ class RealtimeWSPool:
             asyncio.create_task(self._warm_one())
 
     async def _warm_one(self) -> None:
-        """Abre una WS y la pone en el pool (si la app aún corre)."""
         if self._closing:
             return
         async with self._refill_lock:
@@ -122,16 +97,12 @@ class RealtimeWSPool:
                 self._refill_inflight -= 1
 
     async def _open_fresh(self) -> ClientConnection:
-        """Abre una WS nueva al endpoint Realtime con auth header correcto."""
-        from app.realtime.events import is_v2_model
-        model = settings.openai_realtime_model
-        url = f"wss://api.openai.com/v1/realtime?model={model}"
-        headers = {"Authorization": f"Bearer {settings.openai_api_key}"}
-        if not is_v2_model(model):
-            headers["OpenAI-Beta"] = "realtime=v1"
+        # Import local para evitar ciclo (providers importa events)
+        from app.realtime.providers import auth_headers, get_provider
+        spec = get_provider()
         return await websockets.connect(
-            url,
-            additional_headers=headers,
+            spec.ws_url,
+            additional_headers=auth_headers(spec),
             max_size=None,
             ping_interval=20,
             ping_timeout=20,
@@ -139,7 +110,12 @@ class RealtimeWSPool:
         )
 
 
-# Instancia global. Inicializada en main.lifespan.
+def _provider_ready() -> bool:
+    if settings.voice_provider == "grok":
+        return bool(settings.xai_api_key)
+    return bool(settings.openai_api_key)
+
+
 ws_pool: RealtimeWSPool | None = None
 
 

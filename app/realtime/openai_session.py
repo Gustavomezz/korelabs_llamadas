@@ -1,11 +1,9 @@
 """
-Cliente WebSocket a OpenAI Realtime API.
+Cliente WebSocket a un proveedor de Realtime (OpenAI o Grok/xAI).
 
-Auth: solo `Authorization: Bearer ...` para v2; para v1 también
-`OpenAI-Beta: realtime=v1`. Detección por nombre del modelo.
-
-Si el pool de WS pre-warm tiene conexiones disponibles, las usamos para
-saltar el handshake (~500ms). Caemos a cold start como fallback.
+`open_session` abre la conexión (idealmente del pool pre-warm) y le manda el
+session.update y greeting según el provider activo. El bridge consume eventos
+después; este módulo no procesa audio.
 """
 import json
 import time
@@ -16,15 +14,23 @@ import websockets
 from websockets.asyncio.client import ClientConnection
 
 from app.config import logger, settings
-from app.realtime.events import initial_response_create, is_v2_model, session_update
+from app.realtime.events import build_greeting_events_openai, session_update
+from app.realtime.providers import (
+    ProviderSpec,
+    auth_headers,
+    build_greeting_events_grok,
+    build_session_update_grok,
+    get_provider,
+)
 from app.realtime.ws_pool import get_pool
 
-OPENAI_REALTIME_URL_TEMPLATE = "wss://api.openai.com/v1/realtime?model={model}"
 
+class RealtimeSession:
+    """Wrapper común sobre la WS del provider."""
 
-class OpenAISession:
-    def __init__(self, ws: ClientConnection):
+    def __init__(self, ws: ClientConnection, provider: str):
         self._ws = ws
+        self.provider = provider
 
     async def send(self, event: dict) -> None:
         await self._ws.send(json.dumps(event))
@@ -36,7 +42,7 @@ class OpenAISession:
             try:
                 yield json.loads(raw)
             except json.JSONDecodeError:
-                logger.warning("openai realtime: non-json frame ignored: %s", raw[:120])
+                logger.warning("realtime: non-json frame ignored: %s", raw[:120])
 
     async def close(self) -> None:
         try:
@@ -45,23 +51,23 @@ class OpenAISession:
             pass
 
 
+# Alias retro-compatible
+OpenAISession = RealtimeSession
+
+
 @asynccontextmanager
 async def open_session(
     *,
     instructions: str,
     greeting_hint: str | None,
-    voice: str = "cedar",
+    voice: str | None = None,
     tools: list[dict] | None = None,
 ):
     """
-    Abre conexión a OpenAI Realtime (idealmente del pool pre-warm),
-    manda session.update + response.create inicial, devuelve sesión lista.
-    Cierra al salir.
+    Abre conexión al provider activo (idealmente del pool pre-warm), manda
+    session.update + greeting, devuelve sesión lista. Cierra al salir.
     """
-    if not settings.openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY not configured")
-
-    model = settings.openai_realtime_model
+    spec = get_provider()
     pool = get_pool()
     t0 = time.monotonic()
 
@@ -69,49 +75,73 @@ async def open_session(
     if pool is not None:
         try:
             ws = await pool.acquire()
-            logger.info("openai realtime: pool acquire took %d ms", int((time.monotonic() - t0) * 1000))
+            logger.info("realtime[%s]: pool acquire took %d ms",
+                        spec.name, int((time.monotonic() - t0) * 1000))
         except Exception:
             logger.exception("ws pool acquire failed, falling back to cold start")
-            ws = await _open_cold(model)
+            ws = await _open_cold(spec)
     else:
-        ws = await _open_cold(model)
+        ws = await _open_cold(spec)
 
-    logger.info("openai realtime: ws ready (total %d ms)", int((time.monotonic() - t0) * 1000))
-    session = OpenAISession(ws)
-    prompt_id = settings.openai_prompt_id or None
-    await session.send(session_update(
-        instructions=instructions,
-        model=model,
-        voice=voice,
-        tools=tools or [],
-        reasoning_effort=settings.openai_reasoning_effort,
-        vad_type=settings.realtime_vad_type,
-        vad_eagerness=settings.realtime_vad_eagerness,
-        prompt_id=prompt_id,
-    ))
-    if prompt_id:
-        logger.info("openai realtime: session.update sent (prompt_id=%s, voice=%s)", prompt_id, voice)
-    else:
-        logger.info("openai realtime: session.update sent (instructions=%d chars, voice=%s)", len(instructions), voice)
-    await session.send(initial_response_create(greeting_hint))
-    logger.info("openai realtime: greeting response.create sent (total %d ms since acquire)",
-                int((time.monotonic() - t0) * 1000))
+    logger.info("realtime[%s]: ws ready (total %d ms)",
+                spec.name, int((time.monotonic() - t0) * 1000))
+    session = RealtimeSession(ws, provider=spec.name)
+
+    # Construir y enviar session.update + greeting según provider
+    update_event, greeting_events, voice_used = _build_session_payloads(
+        spec, instructions, greeting_hint, voice, tools or [],
+    )
+    await session.send(update_event)
+    logger.info("realtime[%s]: session.update sent (voice=%s, instructions=%d chars, prompt_id=%s)",
+                spec.name, voice_used, len(instructions), settings.openai_prompt_id or "-")
+    for evt in greeting_events:
+        await session.send(evt)
+    logger.info("realtime[%s]: greeting sent (total %d ms since acquire)",
+                spec.name, int((time.monotonic() - t0) * 1000))
+
     try:
         yield session
     finally:
         await session.close()
 
 
-async def _open_cold(model: str) -> ClientConnection:
+def _build_session_payloads(
+    spec: ProviderSpec,
+    instructions: str,
+    greeting_hint: str | None,
+    voice: str | None,
+    tools: list[dict],
+) -> tuple[dict, list[dict], str]:
+    """Devuelve (session.update, [greeting events], voice usada)."""
+    if spec.name == "grok":
+        chosen_voice = voice or settings.grok_voice
+        update = build_session_update_grok(
+            instructions=instructions, voice=chosen_voice, tools=tools or None,
+        )
+        return update, build_greeting_events_grok(greeting_hint), chosen_voice
+
+    # default: openai (v1 o v2 según modelo)
+    chosen_voice = voice or "cedar"
+    prompt_id = settings.openai_prompt_id or None
+    update = session_update(
+        instructions=instructions,
+        model=settings.openai_realtime_model,
+        voice=chosen_voice,
+        tools=tools or [],
+        reasoning_effort=settings.openai_reasoning_effort,
+        vad_type=settings.realtime_vad_type,
+        vad_eagerness=settings.realtime_vad_eagerness,
+        prompt_id=prompt_id,
+    )
+    return update, build_greeting_events_openai(greeting_hint), chosen_voice
+
+
+async def _open_cold(spec: ProviderSpec) -> ClientConnection:
     """Conexión fresca (sin pool). Ruta de fallback."""
-    url = OPENAI_REALTIME_URL_TEMPLATE.format(model=model)
-    headers = {"Authorization": f"Bearer {settings.openai_api_key}"}
-    if not is_v2_model(model):
-        headers["OpenAI-Beta"] = "realtime=v1"
-    logger.info("openai realtime: cold-start connect model=%s v2=%s", model, is_v2_model(model))
+    logger.info("realtime[%s]: cold-start connect", spec.name)
     return await websockets.connect(
-        url,
-        additional_headers=headers,
+        spec.ws_url,
+        additional_headers=auth_headers(spec),
         max_size=None,
         ping_interval=20,
         ping_timeout=20,

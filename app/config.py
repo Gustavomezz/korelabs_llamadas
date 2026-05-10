@@ -12,8 +12,20 @@ logger = logging.getLogger("korelabs.llamadas")
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # Proveedor de voz: 'openai' (gpt-realtime-2) o 'grok' (grok-voice-think-fast-1.0).
+    # Cambia el endpoint, el envelope del session.update y los nombres de
+    # algunos eventos. El bridge maneja ambos transparentemente.
+    voice_provider: str = "openai"
+
     openai_api_key: str = ""
     openai_realtime_model: str = "gpt-realtime-2"
+
+    # Grok / xAI. Solo se usan si voice_provider='grok'.
+    xai_api_key: str = ""
+    xai_realtime_model: str = "grok-voice-think-fast-1.0"
+    # Voz Grok: eve | ara | rex | sal | leo. ara es femenina cálida (más
+    # parecida al estilo de "Kora" de OpenAI/cedar).
+    grok_voice: str = "ara"
     # 'minimal' (más rápido, suficiente para calificación de leads) | 'low' |
     # 'medium' | 'high' | 'xhigh'. Default minimal: ahorra ~450ms en
     # tiempo a primer audio comparado con 'low'.
