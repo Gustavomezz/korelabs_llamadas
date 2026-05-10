@@ -15,8 +15,8 @@ def session_update(
     voice: str = "cedar",
     temperature: float = 0.8,
     tools: Iterable[dict] | None = None,
-    vad_threshold: float = 0.5,
-    vad_silence_ms: int = 600,
+    vad_threshold: float = 0.7,
+    vad_silence_ms: int = 700,
     vad_prefix_ms: int = 300,
 ) -> dict:
     """

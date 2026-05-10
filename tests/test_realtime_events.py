@@ -20,6 +20,8 @@ def test_session_update_uses_g711_ulaw_end_to_end():
     assert s["instructions"] == "hola"
     assert s["voice"] == "cedar"
     assert s["turn_detection"]["type"] == "server_vad"
+    assert s["turn_detection"]["threshold"] == 0.7
+    assert s["turn_detection"]["silence_duration_ms"] == 700
     assert s["input_audio_transcription"]["model"] == "whisper-1"
     assert "tools" not in s  # vacío -> no se incluye
 

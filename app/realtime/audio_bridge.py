@@ -53,10 +53,17 @@ class AudioBridge:
         self.call_id = call_id
         self._frames_in = 0
         self._frames_out = 0
+        # Sólo limpiamos el buffer de Twilio (barge-in) si el bot está
+        # actualmente generando una respuesta. Sin este guard, cualquier
+        # falso speech_started del caller (ruido, ambient) cortaría audio
+        # que ni siquiera ha empezado a enviarse.
+        self._response_active = False
+        self._first_audio_delta_logged = False
 
     async def run(self) -> None:
         t1 = asyncio.create_task(self._pump_twilio_to_openai(), name="twilio->openai")
         t2 = asyncio.create_task(self._pump_openai_to_twilio(), name="openai->twilio")
+        logger.info("bridge started call_id=%s", self.call_id)
         done, pending = await asyncio.wait({t1, t2}, return_when=asyncio.FIRST_COMPLETED)
         for task in pending:
             task.cancel()
@@ -86,9 +93,8 @@ class AudioBridge:
                 elif kind == "stop":
                     logger.info("twilio sent stop call_id=%s", self.call_id)
                     return
-                # connected/start/mark: ya manejados en el handler antes del bridge
+                # connected/start/mark: ya manejados antes del bridge o ignorables
         except Exception as exc:
-            # WebSocketDisconnect viene cuando el caller cuelga: es flujo normal.
             from starlette.websockets import WebSocketDisconnect
             if isinstance(exc, WebSocketDisconnect):
                 logger.info("twilio ws disconnected call_id=%s", self.call_id)
@@ -97,34 +103,53 @@ class AudioBridge:
             return
 
     async def _pump_openai_to_twilio(self) -> None:
+        event_count = 0
         try:
             async for event in self.openai.events():
-                kind = event.get("type")
+                event_count += 1
+                kind = event.get("type", "?")
+
+                if event_count == 1:
+                    logger.info("openai first event call_id=%s type=%s", self.call_id, kind)
+
                 if kind == "response.audio.delta":
                     delta = event.get("delta")
                     if delta:
+                        if not self._first_audio_delta_logged:
+                            logger.info(
+                                "openai first audio.delta call_id=%s size=%d twilio_state=%s",
+                                self.call_id, len(delta), self.twilio.application_state.name,
+                            )
+                            self._first_audio_delta_logged = True
                         await self._send_twilio(twilio_media_event(self.stream_sid, delta))
                         self._frames_out += 1
+                elif kind == "response.created":
+                    self._response_active = True
+                elif kind == "response.done":
+                    self._response_active = False
                 elif kind == "input_audio_buffer.speech_started":
-                    # Caller empezó a hablar: descartar audio aún sin reproducir
-                    # del lado de Twilio para que el bot deje de hablar al instante.
-                    await self._send_twilio(twilio_clear_event(self.stream_sid))
+                    if self._response_active:
+                        # Caller habla mientras el bot habla: cortar audio
+                        # bufferado en Twilio para que el bot deje de oírse.
+                        logger.info("barge-in: clearing twilio buffer call_id=%s", self.call_id)
+                        await self._send_twilio(twilio_clear_event(self.stream_sid))
                 elif kind == "response.audio_transcript.done":
                     transcript = (event.get("transcript") or "").strip()
                     if transcript:
+                        logger.info("assistant said call_id=%s: %s", self.call_id, transcript[:120])
                         await self._save_transcript("assistant", transcript)
                 elif kind == "conversation.item.input_audio_transcription.completed":
                     transcript = (event.get("transcript") or "").strip()
                     if transcript:
+                        logger.info("user said call_id=%s: %s", self.call_id, transcript[:120])
                         await self._save_transcript("user", transcript)
                 elif kind == "response.function_call_arguments.done":
-                    # Fase 3 implementa tools. Por ahora respondemos un output
-                    # vacío para no dejar al modelo colgado esperando.
+                    # Tools llegan en Fase 3. Devolvemos error para no bloquear.
                     from app.realtime.events import function_call_output
-                    call_id = event.get("call_id")
-                    if call_id:
+                    fn_call_id = event.get("call_id")
+                    if fn_call_id:
                         await self.openai.send(function_call_output(
-                            call_id, {"error": "tools not implemented yet"}
+                            fn_call_id, {"error": "tools not implemented yet"}
                         ))
                         await self.openai.send({"type": "response.create"})
                 elif kind == "error":
@@ -133,16 +158,19 @@ class AudioBridge:
                         "openai realtime error call_id=%s code=%s message=%s",
                         self.call_id, err.get("code"), err.get("message"),
                     )
-                # session.created, session.updated, response.created, etc:
-                # informativos, no se actúa.
         except Exception:
-            logger.exception("openai pump error call_id=%s", self.call_id)
+            logger.exception("openai pump error call_id=%s events_seen=%d", self.call_id, event_count)
             return
+        logger.info("openai pump exited normally call_id=%s events_seen=%d", self.call_id, event_count)
 
     # --- helpers -----------------------------------------------------------
 
     async def _send_twilio(self, message: str) -> None:
         if self.twilio.application_state != WebSocketState.CONNECTED:
+            logger.warning(
+                "drop send to twilio call_id=%s state=%s",
+                self.call_id, self.twilio.application_state.name,
+            )
             return
         try:
             await self.twilio.send_text(message)

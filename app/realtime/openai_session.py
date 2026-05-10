@@ -78,10 +78,14 @@ async def open_session(
         max_size=None,
         ping_interval=20,
         ping_timeout=20,
+        open_timeout=10,
     ) as ws:
+        logger.info("openai realtime: ws connected")
         session = OpenAISession(ws)
         await session.send(session_update(instructions=instructions, voice=voice, tools=tools or []))
+        logger.info("openai realtime: session.update sent (instructions=%d chars, voice=%s)", len(instructions), voice)
         await session.send(initial_response_create(greeting_hint))
+        logger.info("openai realtime: greeting response.create sent")
         try:
             yield session
         finally:
