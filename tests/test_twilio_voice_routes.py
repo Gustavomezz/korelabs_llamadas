@@ -117,8 +117,9 @@ def test_incoming_enabled_tenant_returns_connect_stream(client, monkeypatch):
     assert '<Parameter name="call_sid" value="CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"/>' in body
     assert '<Parameter name="tenant_id" value="42"/>' in body
 
-    assert upsert_calls == ["523321015972"]
+    # MX móvil → wa_id incluye el "1" extra para coincidir con el formato de WhatsApp
+    assert upsert_calls == ["5213321015972"]
     assert len(create_calls) == 1
     assert create_calls[0]["call_sid"] == "CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-    assert create_calls[0]["wa_id"] == "523321015972"
+    assert create_calls[0]["wa_id"] == "5213321015972"
     assert create_calls[0]["caller_number"] == "+523321015972"
