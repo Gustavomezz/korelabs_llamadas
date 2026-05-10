@@ -56,22 +56,25 @@ async def update_call_status(
     recording_url: Optional[str] = None,
 ) -> None:
     async with pool.acquire() as conn:
+        # Cast explícito de $2 a varchar: se usa tanto como valor para la columna
+        # `status` (varchar) como para comparaciones con literales (text), y sin
+        # cast asyncpg no puede decidir el tipo y aborta con AmbiguousParameterError.
         await conn.execute(
             """
             UPDATE calls
-            SET status = $2,
+            SET status = $2::varchar,
                 answered_at = CASE
-                    WHEN $2 = 'in-progress' AND answered_at IS NULL THEN NOW()
+                    WHEN $2::varchar = 'in-progress' AND answered_at IS NULL THEN NOW()
                     ELSE answered_at
                 END,
                 ended_at = CASE
-                    WHEN $2 IN ('completed', 'failed', 'canceled', 'no-answer', 'busy')
+                    WHEN $2::varchar IN ('completed', 'failed', 'canceled', 'no-answer', 'busy')
                          AND ended_at IS NULL THEN NOW()
                     ELSE ended_at
                 END,
-                ended_reason = COALESCE($3, ended_reason),
-                duration_seconds = COALESCE($4, duration_seconds),
-                recording_url = COALESCE($5, recording_url)
+                ended_reason = COALESCE($3::varchar, ended_reason),
+                duration_seconds = COALESCE($4::integer, duration_seconds),
+                recording_url = COALESCE($5::text, recording_url)
             WHERE call_sid = $1
             """,
             call_sid,

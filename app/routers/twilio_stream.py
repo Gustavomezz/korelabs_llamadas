@@ -17,7 +17,7 @@ router = APIRouter(tags=["twilio"])
 
 @router.websocket("/twilio/media-stream")
 async def media_stream(ws: WebSocket):
-    await ws.accept(subprotocol="audio")
+    await ws.accept()
     call_sid = None
     tenant_id = None
     media_frames = 0
