@@ -18,13 +18,15 @@ import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.ai.tools import REALTIME_TOOLS
 from app.config import logger
 from app.database import dashboard_pool, get_tenant_pool
 from app.integrations.dashboard_db import fetch_tenant_by_voice_number
 from app.models.bot_configs import get_active_voice_prompt
-from app.models.calls import get_call_id_by_sid, update_call_status
+from app.models.calls import get_call_by_sid, update_call_status
 from app.realtime.audio_bridge import AudioBridge
 from app.realtime.openai_session import open_session
+from app.tenant_resolver import normalize_e164_to_wa_id
 
 router = APIRouter(tags=["twilio"])
 
@@ -43,6 +45,7 @@ async def media_stream(ws: WebSocket):
     call_sid: str | None = None
     tenant_id: str | None = None
     stream_sid: str | None = None
+    caller_e164: str | None = None
 
     try:
         # Twilio manda: connected -> start -> media* -> stop
@@ -98,10 +101,12 @@ async def media_stream(ws: WebSocket):
         pool = await get_tenant_pool(str(tenant.id), tenant.database_url)
 
         voice_prompt = await get_active_voice_prompt(pool)
-        call_id = await get_call_id_by_sid(pool, call_sid)
-        if call_id is None:
+        call_row = await get_call_by_sid(pool, call_sid)
+        if call_row is None:
             logger.error("calls row not found for CallSid=%s", call_sid)
             return
+        call_id = call_row["id"]
+        wa_id = call_row["wa_id"] or normalize_e164_to_wa_id(call_row["caller_number"])
 
         await update_call_status(pool, call_sid=call_sid, status="in-progress")
     except Exception:
@@ -110,10 +115,14 @@ async def media_stream(ws: WebSocket):
 
     # Abrir sesión OpenAI Realtime y arrancar el bridge.
     try:
-        async with open_session(instructions=voice_prompt, greeting_hint=GREETING_HINT) as openai:
+        async with open_session(
+            instructions=voice_prompt,
+            greeting_hint=GREETING_HINT,
+            tools=REALTIME_TOOLS,
+        ) as openai:
             bridge = AudioBridge(
                 twilio_ws=ws, openai=openai, pool=pool,
-                stream_sid=stream_sid, call_id=call_id,
+                stream_sid=stream_sid, call_id=call_id, wa_id=wa_id,
             )
             await bridge.run()
     except Exception:

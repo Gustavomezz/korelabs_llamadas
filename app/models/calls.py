@@ -90,6 +90,16 @@ async def get_call_id_by_sid(pool: asyncpg.Pool, call_sid: str) -> Optional[int]
         return await conn.fetchval("SELECT id FROM calls WHERE call_sid = $1", call_sid)
 
 
+async def get_call_by_sid(pool: asyncpg.Pool, call_sid: str) -> Optional[dict]:
+    """Devuelve {'id', 'wa_id', 'caller_number'} o None."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, wa_id, caller_number FROM calls WHERE call_sid = $1",
+            call_sid,
+        )
+    return dict(row) if row else None
+
+
 async def insert_transcript(
     pool: asyncpg.Pool,
     *,

@@ -26,5 +26,11 @@ class Settings(BaseSettings):
 
     admin_token: str = ""
 
+    # Google Calendar (compartidas con el bot de WhatsApp del tenant). Solo
+    # las usamos para refrescar tokens; el OAuth inicial lo hace el bot WA.
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    calendar_timezone: str = "America/Mexico_City"
+
 
 settings = Settings()

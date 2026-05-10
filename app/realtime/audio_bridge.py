@@ -5,24 +5,25 @@ Dos tareas asyncio corren en paralelo:
   - `_pump_twilio_to_openai`: lee eventos `media` de Twilio, los inyecta como
     `input_audio_buffer.append` en OpenAI.
   - `_pump_openai_to_twilio`: lee eventos de OpenAI, escribe `media` events a
-    Twilio cuando llegan deltas de audio, y persiste transcripts en la BD.
+    Twilio cuando llegan deltas de audio, persiste transcripts en BD, y
+    despacha tool calls.
 
 Cuando cualquiera de las dos tareas termina (caller cuelga, OpenAI cierra,
-error fatal), la otra se cancela y `run` retorna. La cleanup de las WS se hace
-en los context managers que envuelven al bridge.
+error fatal), la otra se cancela y `run` retorna.
 """
 import asyncio
 import json
-from typing import Optional
 
 import asyncpg
 from fastapi import WebSocket
 from fastapi.websockets import WebSocketState
 
+from app.ai.tools import ToolContext, execute_tool
 from app.config import logger
 from app.models.calls import insert_transcript
 from app.realtime.events import (
     append_audio,
+    function_call_output,
     twilio_clear_event,
     twilio_media_event,
 )
@@ -30,13 +31,6 @@ from app.realtime.openai_session import OpenAISession
 
 
 class AudioBridge:
-    """
-    Estado compartido entre las dos pumps:
-      - `stream_sid`: lo da Twilio en el evento `start`. Necesario para
-        cualquier mensaje que escribamos hacia Twilio.
-      - `call_id`: PK en `calls`, lo precargamos antes de iniciar el bridge.
-    """
-
     def __init__(
         self,
         *,
@@ -45,25 +39,27 @@ class AudioBridge:
         pool: asyncpg.Pool,
         stream_sid: str,
         call_id: int,
+        wa_id: str,
     ):
         self.twilio = twilio_ws
         self.openai = openai
         self.pool = pool
         self.stream_sid = stream_sid
         self.call_id = call_id
+        self.tool_ctx = ToolContext(pool=pool, wa_id=wa_id)
         self._frames_in = 0
         self._frames_out = 0
         # Sólo limpiamos el buffer de Twilio (barge-in) si el bot está
         # actualmente generando una respuesta. Sin este guard, cualquier
-        # falso speech_started del caller (ruido, ambient) cortaría audio
-        # que ni siquiera ha empezado a enviarse.
+        # falso speech_started del caller cortaría audio que ni siquiera
+        # ha empezado a enviarse.
         self._response_active = False
         self._first_audio_delta_logged = False
 
     async def run(self) -> None:
         t1 = asyncio.create_task(self._pump_twilio_to_openai(), name="twilio->openai")
         t2 = asyncio.create_task(self._pump_openai_to_twilio(), name="openai->twilio")
-        logger.info("bridge started call_id=%s", self.call_id)
+        logger.info("bridge started call_id=%s wa_id=%s", self.call_id, self.tool_ctx.wa_id)
         done, pending = await asyncio.wait({t1, t2}, return_when=asyncio.FIRST_COMPLETED)
         for task in pending:
             task.cancel()
@@ -93,7 +89,6 @@ class AudioBridge:
                 elif kind == "stop":
                     logger.info("twilio sent stop call_id=%s", self.call_id)
                     return
-                # connected/start/mark: ya manejados antes del bridge o ignorables
         except Exception as exc:
             from starlette.websockets import WebSocketDisconnect
             if isinstance(exc, WebSocketDisconnect):
@@ -129,8 +124,6 @@ class AudioBridge:
                     self._response_active = False
                 elif kind == "input_audio_buffer.speech_started":
                     if self._response_active:
-                        # Caller habla mientras el bot habla: cortar audio
-                        # bufferado en Twilio para que el bot deje de oírse.
                         logger.info("barge-in: clearing twilio buffer call_id=%s", self.call_id)
                         await self._send_twilio(twilio_clear_event(self.stream_sid))
                 elif kind == "response.audio_transcript.done":
@@ -144,14 +137,7 @@ class AudioBridge:
                         logger.info("user said call_id=%s: %s", self.call_id, transcript[:120])
                         await self._save_transcript("user", transcript)
                 elif kind == "response.function_call_arguments.done":
-                    # Tools llegan en Fase 3. Devolvemos error para no bloquear.
-                    from app.realtime.events import function_call_output
-                    fn_call_id = event.get("call_id")
-                    if fn_call_id:
-                        await self.openai.send(function_call_output(
-                            fn_call_id, {"error": "tools not implemented yet"}
-                        ))
-                        await self.openai.send({"type": "response.create"})
+                    asyncio.create_task(self._handle_tool_call(event))
                 elif kind == "error":
                     err = event.get("error", {})
                     logger.error(
@@ -162,6 +148,52 @@ class AudioBridge:
             logger.exception("openai pump error call_id=%s events_seen=%d", self.call_id, event_count)
             return
         logger.info("openai pump exited normally call_id=%s events_seen=%d", self.call_id, event_count)
+
+    # --- tool dispatch -----------------------------------------------------
+
+    async def _handle_tool_call(self, event: dict) -> None:
+        """
+        Ejecuta la tool en background y devuelve el resultado a OpenAI.
+        Lanzado como task para no bloquear el pump principal mientras
+        Google Calendar responde (1-2s típicos).
+        """
+        name = event.get("name") or "?"
+        fn_call_id = event.get("call_id")
+        raw_args = event.get("arguments") or "{}"
+        try:
+            args = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
+        except json.JSONDecodeError:
+            logger.warning("tool %s got non-json arguments: %r", name, raw_args)
+            args = {}
+
+        logger.info("tool call name=%s args=%s call_id=%s", name, args, self.call_id)
+        result_str = await execute_tool(name, args, self.tool_ctx)
+
+        # Persistir como una sola fila en call_transcripts para auditoría.
+        try:
+            parsed_result = json.loads(result_str)
+        except json.JSONDecodeError:
+            parsed_result = {"raw": result_str}
+        try:
+            await insert_transcript(
+                self.pool,
+                call_id=self.call_id,
+                role="tool",
+                content=name,
+                tool_name=name,
+                tool_args=args,
+                tool_result=parsed_result,
+            )
+        except Exception:
+            logger.exception("failed to persist tool transcript call_id=%s", self.call_id)
+
+        if not fn_call_id:
+            logger.warning("tool call %s without call_id, can't return output", name)
+            return
+
+        await self.openai.send(function_call_output(fn_call_id, result_str))
+        # Pedir al modelo que continúe con el output recién entregado.
+        await self.openai.send({"type": "response.create"})
 
     # --- helpers -----------------------------------------------------------
 
