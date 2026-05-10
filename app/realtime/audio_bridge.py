@@ -143,7 +143,21 @@ class AudioBridge:
                 elif kind == "response.done":
                     self._response_active = False
                     self._response_audio_started_at = None
-                    rid = (event.get("response") or {}).get("id")
+                    resp = event.get("response") or {}
+                    rid = resp.get("id")
+                    # Loguea métricas de prompt caching para validar que el
+                    # cache hit pasa entre llamadas. cached_tokens > 0 =
+                    # OpenAI reusó el prompt en lugar de re-procesarlo.
+                    usage = resp.get("usage") or {}
+                    cached = (usage.get("input_token_details") or {}).get("cached_tokens", 0)
+                    in_tok = usage.get("input_tokens", 0)
+                    out_tok = usage.get("output_tokens", 0)
+                    if in_tok or out_tok:
+                        cache_pct = (cached / in_tok * 100) if in_tok else 0
+                        logger.info(
+                            "openai usage call_id=%s in=%d cached=%d (%.0f%%) out=%d",
+                            self.call_id, in_tok, cached, cache_pct, out_tok,
+                        )
                     await self._flush_assistant_transcript(rid)
                 elif kind == "input_audio_buffer.speech_started":
                     # Sólo respetar barge-in si: (1) hay respuesta activa,

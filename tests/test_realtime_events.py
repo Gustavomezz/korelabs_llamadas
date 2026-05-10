@@ -80,6 +80,35 @@ def test_session_update_v2_can_change_reasoning_effort():
     assert evt["session"]["reasoning"]["effort"] == "medium"
 
 
+def test_session_update_v2_uses_prompt_id_when_set():
+    """Si pasamos prompt_id, debe usarse en lugar de instructions inline.
+    Reduce payload del session.update y maximiza cache hit en OpenAI."""
+    evt = session_update(
+        instructions="esto NO debería enviarse",
+        model="gpt-realtime-2",
+        prompt_id="pmpt_abc123",
+    )
+    s = evt["session"]
+    assert s["prompt"] == {"id": "pmpt_abc123"}
+    assert "instructions" not in s
+
+
+def test_session_update_v2_prompt_id_with_version():
+    evt = session_update(
+        instructions="x",
+        model="gpt-realtime-2",
+        prompt_id="pmpt_xyz",
+        prompt_version="3",
+    )
+    assert evt["session"]["prompt"] == {"id": "pmpt_xyz", "version": "3"}
+
+
+def test_session_update_v2_falls_back_to_instructions_without_prompt_id():
+    evt = session_update(instructions="hola amigo", model="gpt-realtime-2")
+    assert evt["session"]["instructions"] == "hola amigo"
+    assert "prompt" not in evt["session"]
+
+
 def test_session_update_v2_with_tools():
     tools = [{"type": "function", "name": "ping", "parameters": {}}]
     evt = session_update(

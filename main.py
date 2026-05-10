@@ -2,8 +2,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.config import logger
+from app.config import logger, settings
 from app.database import close_pools, init_pools
+from app.realtime.ws_pool import init_pool
 from app.routers import admin, twilio_status, twilio_stream, twilio_voice
 
 
@@ -11,7 +12,10 @@ from app.routers import admin, twilio_status, twilio_stream, twilio_voice
 async def lifespan(app: FastAPI):
     logger.info("starting korelabs_llamadas")
     await init_pools()
+    pool = init_pool(target_size=settings.realtime_ws_pool_size)
+    await pool.start()
     yield
+    await pool.shutdown()
     await close_pools()
     logger.info("shutdown complete")
 

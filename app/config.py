@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     # Sirve de guard contra eco inmediato del bot que la VAD detecta como
     # speech del caller. 500ms es un punto seguro empíricamente.
     barge_in_guard_ms: int = 500
+    # Pool de WebSockets pre-conectadas a OpenAI. Cada conexión idle ahorra
+    # ~500 ms de TCP+TLS+upgrade en cold start. 0 deshabilita el pool.
+    realtime_ws_pool_size: int = 2
+    # Server-stored prompt ID en OpenAI (creado vía POST /v1/prompts). Si
+    # está set, lo usamos en lugar de mandar instructions inline. Reduce
+    # payload y maximiza cache hit del prompt en OpenAI.
+    openai_prompt_id: str = ""
 
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""

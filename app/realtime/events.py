@@ -58,6 +58,8 @@ def session_update(
     vad_type: str = "semantic_vad",
     vad_eagerness: str = "high",
     noise_reduction: str | None = "near_field",
+    prompt_id: str | None = None,
+    prompt_version: str | None = None,
 ) -> dict:
     """
     Construye `session.update` para Realtime. Audio g711 µ-law end-to-end
@@ -78,7 +80,6 @@ def session_update(
 
         session: dict[str, Any] = {
             "type": "realtime",
-            "instructions": instructions,
             "output_modalities": ["audio"],
             "audio": {
                 "input": audio_input,
@@ -90,6 +91,15 @@ def session_update(
             },
             "tool_choice": "auto",
         }
+        # Server-stored prompt es preferido si está disponible (más rápido,
+        # mejor cacheado en OpenAI). Sin él caemos a instructions inline.
+        if prompt_id:
+            prompt_obj: dict[str, Any] = {"id": prompt_id}
+            if prompt_version:
+                prompt_obj["version"] = prompt_version
+            session["prompt"] = prompt_obj
+        else:
+            session["instructions"] = instructions
         if reasoning_effort:
             # minimal | low | medium | high | xhigh. minimal recomendado para
             # voz de baja latencia con tareas simples (calificación, lookup).
