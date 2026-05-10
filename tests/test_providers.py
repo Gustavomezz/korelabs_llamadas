@@ -13,7 +13,7 @@ from app.realtime.providers import (
 from app.realtime.events import build_greeting_events_openai
 
 
-def test_grok_session_update_envelope():
+def test_grok_session_update_envelope_with_aggressive_vad():
     evt = build_session_update_grok(
         instructions="Hola Kora", voice="ara", tools=None,
     )
@@ -21,8 +21,14 @@ def test_grok_session_update_envelope():
     assert evt["type"] == "session.update"
     assert s["instructions"] == "Hola Kora"
     assert s["voice"] == "ara"  # voice top-level (no como OpenAI v2 que va anidado)
-    assert s["turn_detection"] == {"type": "server_vad"}
-    # Audio anidado pero sin la complejidad de OpenAI v2
+    # Default VAD agresivo: 300ms silence, threshold 0.5 (mismo que OpenAI)
+    td = s["turn_detection"]
+    assert td["type"] == "server_vad"
+    assert td["threshold"] == 0.5
+    assert td["silence_duration_ms"] == 300
+    assert td["prefix_padding_ms"] == 200
+    assert td["interrupt_response"] is True
+    # Audio anidado, mismo formato que OpenAI para Twilio
     assert s["audio"]["input"]["format"] == {"type": "audio/pcmu", "rate": 8000}
     assert s["audio"]["output"]["format"] == {"type": "audio/pcmu", "rate": 8000}
     # Grok NO tiene estos campos
@@ -30,6 +36,26 @@ def test_grok_session_update_envelope():
     assert "output_modalities" not in s
     assert "reasoning" not in s
     assert "tool_choice" not in s  # opcional, no lo mandamos por default
+
+
+def test_grok_session_update_with_max_tokens():
+    """max_response_output_tokens no está documentado en Grok pero forkea
+    OpenAI: lo enviamos optimistamente para acortar respuestas."""
+    evt = build_session_update_grok(
+        instructions="x", voice="ara", tools=None, max_output_tokens=300,
+    )
+    assert evt["session"]["max_response_output_tokens"] == 300
+
+
+def test_grok_session_update_can_tune_vad():
+    evt = build_session_update_grok(
+        instructions="x", voice="eve", tools=None,
+        vad_threshold=0.7, vad_silence_ms=200, vad_prefix_ms=150,
+    )
+    td = evt["session"]["turn_detection"]
+    assert td["threshold"] == 0.7
+    assert td["silence_duration_ms"] == 200
+    assert td["prefix_padding_ms"] == 150
 
 
 def test_grok_session_update_with_tools():

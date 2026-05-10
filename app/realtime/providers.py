@@ -59,19 +59,42 @@ def build_session_update_grok(
     instructions: str,
     voice: str,
     tools: Iterable[dict] | None,
+    vad_threshold: float = 0.5,
+    vad_silence_ms: int = 300,
+    vad_prefix_ms: int = 200,
+    max_output_tokens: int | None = None,
 ) -> dict:
     """
-    Envelope para Grok Voice Think Fast 1.0:
-    - Sin session.type ni output_modalities.
-    - voice y turn_detection top-level.
-    - audio.input.format / audio.output.format con type=audio/pcmu para Twilio.
-    - Sin reasoning (Grok hace background reasoning sin trade-off).
-    - Sin transcription documentada (puede no haber transcripts del user).
+    Envelope para Grok Voice Think Fast 1.0.
+
+    Grok forkea el protocolo de OpenAI Realtime así que casi todos los
+    parámetros funcionan igual:
+    - `turn_detection` con threshold/silence_duration_ms/prefix_padding_ms
+      (mismos rangos que OpenAI: el default conservador del servicio causaba
+      delay grande; con los mismos params agresivos que usamos en OpenAI
+      mini, Grok debería bajar similar).
+    - `max_response_output_tokens` no está documentado oficialmente pero como
+      Grok forkea OpenAI lo enviamos optimistamente — si no lo soporta
+      simplemente lo ignora (testeamos contra el API).
+
+    NO soportado en Grok (vs OpenAI):
+    - `reasoning.effort` (Grok dice que razona en background sin trade-off)
+    - `prompt_id` server-stored
+    - `transcription` para capturar lo que dice el user (puede no haber
+      transcripts del usuario en BD — verificar tras primera llamada).
+    - `output_modalities` y `session.type` (envelope sin esos campos).
     """
     session: dict[str, Any] = {
         "voice": voice,
         "instructions": instructions,
-        "turn_detection": {"type": "server_vad"},
+        "turn_detection": {
+            "type": "server_vad",
+            "threshold": vad_threshold,
+            "prefix_padding_ms": vad_prefix_ms,
+            "silence_duration_ms": vad_silence_ms,
+            "create_response": True,
+            "interrupt_response": True,
+        },
         "audio": {
             "input": {"format": {"type": "audio/pcmu", "rate": 8000}},
             "output": {"format": {"type": "audio/pcmu", "rate": 8000}},
@@ -79,6 +102,8 @@ def build_session_update_grok(
     }
     if tools:
         session["tools"] = list(tools)
+    if max_output_tokens:
+        session["max_response_output_tokens"] = max_output_tokens
     return {"type": "session.update", "session": session}
 
 

@@ -116,7 +116,13 @@ def _build_session_payloads(
     if spec.name == "grok":
         chosen_voice = voice or settings.grok_voice
         update = build_session_update_grok(
-            instructions=instructions, voice=chosen_voice, tools=tools or None,
+            instructions=instructions,
+            voice=chosen_voice,
+            tools=tools or None,
+            vad_threshold=settings.realtime_vad_threshold,
+            vad_silence_ms=settings.realtime_vad_silence_ms,
+            vad_prefix_ms=settings.realtime_vad_prefix_ms,
+            max_output_tokens=settings.openai_max_output_tokens,
         )
         return update, build_greeting_events_grok(greeting_hint), chosen_voice
 
