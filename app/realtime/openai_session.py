@@ -135,6 +135,7 @@ def _build_session_payloads(
         vad_silence_ms=settings.realtime_vad_silence_ms,
         vad_prefix_ms=settings.realtime_vad_prefix_ms,
         prompt_id=prompt_id,
+        max_output_tokens=settings.openai_max_output_tokens,
     )
     return update, build_greeting_events_openai(greeting_hint), chosen_voice
 

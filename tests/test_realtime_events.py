@@ -47,7 +47,7 @@ def test_session_update_v2_envelope_defaults():
     # Default ahora server_vad con threshold alto + silence corto (latencia mínima).
     td = s["audio"]["input"]["turn_detection"]
     assert td["type"] == "server_vad"
-    assert td["threshold"] == 0.85
+    assert td["threshold"] == 0.5  # default actualizado para permitir interrupciones
     assert td["silence_duration_ms"] == 300
     assert td["prefix_padding_ms"] == 200
     assert td["interrupt_response"] is True
@@ -75,11 +75,11 @@ def test_session_update_v2_aggressive_vad_for_low_latency():
     """Configuración recomendada para latencia mínima turn-by-turn."""
     evt = session_update(
         instructions="x", model="gpt-realtime-2",
-        vad_type="server_vad", vad_threshold=0.85, vad_silence_ms=300, vad_prefix_ms=200,
+        vad_type="server_vad", vad_threshold=0.7, vad_silence_ms=300, vad_prefix_ms=200,
     )
     td = evt["session"]["audio"]["input"]["turn_detection"]
     assert td["type"] == "server_vad"
-    assert td["threshold"] == 0.85
+    assert td["threshold"] == 0.7
     assert td["silence_duration_ms"] == 300
     assert td["prefix_padding_ms"] == 200
 
@@ -148,7 +148,7 @@ def test_session_update_v1_envelope():
     assert s["output_audio_format"] == "g711_ulaw"
     assert s["input_audio_transcription"] == {"model": "whisper-1"}
     assert s["turn_detection"]["type"] == "server_vad"
-    assert s["turn_detection"]["threshold"] == 0.85
+    assert s["turn_detection"]["threshold"] == 0.5
     assert "audio" not in s
     assert "output_modalities" not in s
 

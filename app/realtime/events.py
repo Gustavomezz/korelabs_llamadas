@@ -51,7 +51,7 @@ def session_update(
     voice: str = "cedar",
     temperature: float = 0.8,
     tools: Iterable[dict] | None = None,
-    vad_threshold: float = 0.85,
+    vad_threshold: float = 0.5,
     vad_silence_ms: int = 300,
     vad_prefix_ms: int = 200,
     reasoning_effort: str = "minimal",
@@ -60,6 +60,7 @@ def session_update(
     noise_reduction: str | None = "near_field",
     prompt_id: str | None = None,
     prompt_version: str | None = None,
+    max_output_tokens: int | None = None,
 ) -> dict:
     """
     Construye `session.update` para Realtime. Audio g711 µ-law end-to-end
@@ -106,6 +107,8 @@ def session_update(
             session["reasoning"] = {"effort": reasoning_effort}
         if tools:
             session["tools"] = list(tools)
+        if max_output_tokens:
+            session["max_response_output_tokens"] = max_output_tokens
         return {"type": "session.update", "session": session}
 
     # Envelope v1 (legacy)
@@ -128,6 +131,8 @@ def session_update(
     }
     if tools:
         session["tools"] = list(tools)
+    if max_output_tokens:
+        session["max_response_output_tokens"] = max_output_tokens
     return {"type": "session.update", "session": session}
 
 

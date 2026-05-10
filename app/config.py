@@ -18,7 +18,13 @@ class Settings(BaseSettings):
     voice_provider: str = "openai"
 
     openai_api_key: str = ""
-    openai_realtime_model: str = "gpt-realtime-2"
+    # Default 'gpt-realtime-mini': benchmark real mostró 448ms median
+    # session→audio vs 558ms de gpt-realtime-2 (110ms más rápido) y 5x más
+    # barato. Para vender Korelabs (calificación + agendamiento) la
+    # capacidad de razonamiento de v2 no es necesaria; mini la cubre
+    # con sobra. Para casos que necesiten más razonamiento subir a
+    # 'gpt-realtime-2'.
+    openai_realtime_model: str = "gpt-realtime-mini"
 
     # Grok / xAI. Solo se usan si voice_provider='grok'.
     xai_api_key: str = ""
@@ -58,7 +64,15 @@ class Settings(BaseSettings):
     # Server-stored prompt ID en OpenAI (creado vía POST /v1/prompts). Si
     # está set, lo usamos en lugar de mandar instructions inline. Reduce
     # payload y maximiza cache hit del prompt en OpenAI.
+    # IMPORTANTE: solo aplica para modelos v2 (gpt-realtime-2+).
+    # mini y 1.5 lo ignoran (usan instructions inline siempre).
     openai_prompt_id: str = ""
+
+    # Limita el tamaño de las respuestas del modelo. En voz cortas son
+    # mejor (menos tiempo del bot hablando, menos latencia total por
+    # response). 400 cubre 30-40s de voz natural. Bajar a 200 fuerza
+    # respuestas muy concisas.
+    openai_max_output_tokens: int = 400
 
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
