@@ -65,6 +65,12 @@ class AudioBridge:
         # rebotando en la línea telefónica), guard configurable via
         # settings.barge_in_guard_ms.
         self._response_audio_started_at: float | None = None
+        # Para medir latencia turn-by-turn REAL: timestamp del último
+        # speech_stopped del usuario. Comparado contra el siguiente
+        # response.created (= cuándo OpenAI decidió empezar a generar) y
+        # contra la primera audio.delta de esa response (= primer byte audible
+        # listo para mandar a Twilio).
+        self._last_user_speech_stopped_at: float | None = None
         # Acumulador de transcript del assistant. En gpt-realtime-2 el `.done`
         # tarda o no llega; acumulamos deltas y flusheamos en `.done` o en
         # `response.done` (lo que llegue primero). Indexed por response_id.
@@ -132,8 +138,22 @@ class AudioBridge:
                             self._first_audio_delta_logged = True
                         if self._response_audio_started_at is None:
                             self._response_audio_started_at = time.monotonic()
+                            # Latencia REAL turn-by-turn: tiempo desde que el
+                            # caller dejó de hablar hasta el primer byte de
+                            # audio del bot. Lo que el usuario percibe como
+                            # "responde rápido / lento".
+                            if self._last_user_speech_stopped_at:
+                                ms = int((time.monotonic() - self._last_user_speech_stopped_at) * 1000)
+                                logger.info(
+                                    "TURN LATENCY call_id=%s speech_stopped→first_audio=%d ms",
+                                    self.call_id, ms,
+                                )
+                                self._last_user_speech_stopped_at = None
                         await self._send_twilio(twilio_media_event(self.stream_sid, delta))
                         self._frames_out += 1
+                elif kind == "input_audio_buffer.speech_stopped":
+                    self._last_user_speech_stopped_at = time.monotonic()
+                    logger.debug("vad: user speech_stopped call_id=%s", self.call_id)
                 elif kind == "response.created":
                     self._response_active = True
                     self._response_audio_started_at = None
@@ -160,13 +180,13 @@ class AudioBridge:
                         )
                     await self._flush_assistant_transcript(rid)
                 elif kind == "input_audio_buffer.speech_started":
-                    # Sólo respetar barge-in si: (1) hay respuesta activa,
-                    # (2) ya pasaron al menos `barge_in_guard_ms` desde el
-                    # primer audio enviado. El segundo guard previene que
-                    # el eco del bot en la línea telefónica se confunda
-                    # con que el caller está hablando.
+                    # Caller empezó a hablar.
+                    # Si el bot está hablando: barge-in. Sólo respetamos si
+                    # ya pasaron `barge_in_guard_ms` desde el primer audio
+                    # enviado, para no confundir eco inmediato del bot con
+                    # speech del caller.
                     if not self._response_active:
-                        pass
+                        logger.debug("vad: user speech_started call_id=%s", self.call_id)
                     elif (
                         self._response_audio_started_at is None
                         or (time.monotonic() - self._response_audio_started_at) * 1000 < settings.barge_in_guard_ms
