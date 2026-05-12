@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     # entre latencia y instruction-following. 'minimal' a veces salta pasos
     # en flujos estructurados (greeting → main question → listen → offer).
     # Sube a 'medium' si el bot sigue saltándose pasos del prompt.
-    openai_reasoning_effort: str = "low"
+    openai_reasoning_effort: str = "medium"
     # 'server_vad' detecta fin de turno por silencio en ms (configurable
     # abajo). 'semantic_vad' usa modelo NLU pero tiene timeout mínimo ~1-2s
     # incluso con eagerness=high. Para baja latencia preferimos server_vad
