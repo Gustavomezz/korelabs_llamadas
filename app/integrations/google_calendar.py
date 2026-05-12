@@ -141,13 +141,17 @@ async def get_available_slots(
     now_utc = datetime.now(timezone.utc)
 
     # Si pidieron una fecha específica, acotamos la búsqueda a ese día.
+    # Convención del resto del módulo: las "fechas locales" son datetimes
+    # con tzinfo=UTC pero con wall-clock de México (lying timezone). Esto
+    # permite hacer aritmética sin convertir adelante y atrás.
     if target_date:
         try:
-            requested = datetime.strptime(target_date, "%Y-%m-%d").replace(tzinfo=None)
+            date_only = datetime.strptime(target_date, "%Y-%m-%d")
         except ValueError:
             logger.warning("get_available_slots: target_date inválida %r", target_date)
             return []
-        day_start_utc = requested.replace(hour=0, minute=0, second=0) - tz_offset
+        day_local_aware = date_only.replace(tzinfo=timezone.utc)
+        day_start_utc = day_local_aware - tz_offset
         day_end_utc = day_start_utc + timedelta(days=1)
         search_start = max(day_start_utc, now_utc)
         search_end = day_end_utc
@@ -198,11 +202,8 @@ async def get_available_slots(
 
     # Modo "fecha específica": devolver TODOS los slots libres ese día.
     if target_date:
-        try:
-            day_local = datetime.strptime(target_date, "%Y-%m-%d")
-        except ValueError:
-            return []
-        all_slots = _all_business_slots(day_local)
+        # day_local_aware ya fue parseado arriba con tzinfo=UTC (lying tz).
+        all_slots = _all_business_slots(day_local_aware)
         free = [s for s in all_slots if _slot_is_free(s, s + timedelta(minutes=30))]
         return [_format_slot(s) for s in free]
 
