@@ -123,17 +123,39 @@ async def get_busy_periods(pool: asyncpg.Pool, start_iso: str, end_iso: str) -> 
     return result.get("calendars", {}).get("primary", {}).get("busy", [])
 
 
-async def get_available_slots(pool: asyncpg.Pool, days_ahead: int = 14) -> list[dict]:
+async def get_available_slots(
+    pool: asyncpg.Pool,
+    days_ahead: int = 14,
+    target_date: Optional[str] = None,
+) -> list[dict]:
     """
-    3 slots distribuidos en 3 días distintos. L-V, 9am-5:30pm hora México,
-    slots de 30 min. Política: nunca el mismo día (mínimo mañana), espaciados,
-    alterna mañana/tarde para no parecer patrón.
+    Slots libres en el calendario de Gustavo. L-V, 9am-5:30pm hora México,
+    slots de 30 min.
+
+    - Sin target_date: 3 slots distribuidos en 3 días distintos (offsets
+      +1, +3, +5), alterna mañana/tarde. Para la propuesta inicial.
+    - Con target_date (YYYY-MM-DD): TODOS los slots libres de 30 min de
+      ese día. Úsalo cuando el usuario pida un día específico.
     """
     tz_offset = timedelta(hours=-6)
     now_utc = datetime.now(timezone.utc)
-    end_search = now_utc + timedelta(days=days_ahead)
 
-    busy = await get_busy_periods(pool, now_utc.isoformat(), end_search.isoformat())
+    # Si pidieron una fecha específica, acotamos la búsqueda a ese día.
+    if target_date:
+        try:
+            requested = datetime.strptime(target_date, "%Y-%m-%d").replace(tzinfo=None)
+        except ValueError:
+            logger.warning("get_available_slots: target_date inválida %r", target_date)
+            return []
+        day_start_utc = requested.replace(hour=0, minute=0, second=0) - tz_offset
+        day_end_utc = day_start_utc + timedelta(days=1)
+        search_start = max(day_start_utc, now_utc)
+        search_end = day_end_utc
+    else:
+        search_start = now_utc
+        search_end = now_utc + timedelta(days=days_ahead)
+
+    busy = await get_busy_periods(pool, search_start.isoformat(), search_end.isoformat())
     busy_intervals = []
     for b in busy:
         try:
@@ -164,6 +186,27 @@ async def get_available_slots(pool: asyncpg.Pool, days_ahead: int = 14) -> list[
                     slots.append(utc_dt)
         return slots
 
+    def _format_slot(slot_utc: datetime) -> dict:
+        local_dt = slot_utc + tz_offset
+        return {
+            "start_iso": slot_utc.isoformat(),
+            "end_iso": (slot_utc + timedelta(minutes=30)).isoformat(),
+            "display": local_dt.strftime("%A %d/%m a las %I:%M %p"),
+            "date": local_dt.strftime("%Y-%m-%d"),
+            "time": local_dt.strftime("%H:%M"),
+        }
+
+    # Modo "fecha específica": devolver TODOS los slots libres ese día.
+    if target_date:
+        try:
+            day_local = datetime.strptime(target_date, "%Y-%m-%d")
+        except ValueError:
+            return []
+        all_slots = _all_business_slots(day_local)
+        free = [s for s in all_slots if _slot_is_free(s, s + timedelta(minutes=30))]
+        return [_format_slot(s) for s in free]
+
+    # Modo default: 3 slots distribuidos.
     def _pick_slot(day_local: datetime, prefer: str) -> Optional[datetime]:
         all_slots = _all_business_slots(day_local)
         free = [s for s in all_slots if _slot_is_free(s, s + timedelta(minutes=30))]
@@ -193,14 +236,7 @@ async def get_available_slots(pool: asyncpg.Pool, days_ahead: int = 14) -> list[
                 continue
             slot_utc = _pick_slot(candidate_day, prefer)
             if slot_utc:
-                local_dt = slot_utc + tz_offset
-                chosen.append({
-                    "start_iso": slot_utc.isoformat(),
-                    "end_iso": (slot_utc + timedelta(minutes=30)).isoformat(),
-                    "display": local_dt.strftime("%A %d/%m a las %I:%M %p"),
-                    "date": local_dt.strftime("%Y-%m-%d"),
-                    "time": local_dt.strftime("%H:%M"),
-                })
+                chosen.append(_format_slot(slot_utc))
                 used_dates.add(candidate_day.date())
                 break
     return chosen

@@ -25,18 +25,28 @@ REALTIME_TOOLS: list[dict] = [
         "type": "function",
         "name": "get_available_slots",
         "description": (
-            "Obtiene 3 horarios disponibles en la agenda de Gustavo, distribuidos "
-            "en 3 días distintos (típicamente mañana, +3 días, +5 días). "
-            "Lunes a viernes, 9am-5:30pm hora México. "
-            "Llama esta función SIEMPRE antes de proponer cualquier horario al usuario, "
-            "y copia exactamente los start_iso/end_iso que devuelve."
+            "Obtiene horarios disponibles en la agenda de Gustavo. "
+            "Lunes a viernes, 9am-5:30pm hora México, slots de 30 min. "
+            "Llama esta función SIEMPRE antes de proponer cualquier horario, "
+            "y copia exactamente los start_iso/end_iso que devuelve. "
+            "MODO DEFAULT (sin target_date): devuelve 3 horarios distribuidos "
+            "en 3 días distintos (mañana, +3 días, +5 días) — úsalo para la "
+            "propuesta inicial. "
+            "MODO FECHA ESPECÍFICA (con target_date): devuelve TODOS los slots "
+            "libres de ese día — úsalo cuando el usuario pida un día concreto "
+            "('¿tienes el martes?', 'algo el 15 de mayo?'). Convierte el día "
+            "que pidió a YYYY-MM-DD basándote en la fecha actual."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "days_ahead": {
                     "type": "integer",
-                    "description": "Ventana de búsqueda en días (default 14)",
+                    "description": "Ventana de búsqueda en días (default 14). Solo aplica si NO se pasa target_date.",
+                },
+                "target_date": {
+                    "type": "string",
+                    "description": "Fecha específica en formato YYYY-MM-DD. Si se pasa, devuelve TODOS los slots libres de ese día.",
                 },
             },
             "required": [],
@@ -140,9 +150,20 @@ async def execute_tool(name: str, args: dict, ctx: ToolContext) -> str:
     """
     try:
         if name == "get_available_slots":
-            slots = await get_available_slots(ctx.pool, args.get("days_ahead", 14))
+            target_date = args.get("target_date") or None
+            slots = await get_available_slots(
+                ctx.pool,
+                days_ahead=args.get("days_ahead", 14),
+                target_date=target_date,
+            )
             if not slots:
-                return json.dumps({"slots": [], "message": "No hay horarios disponibles próximos"})
+                msg = (
+                    f"No hay horarios libres el {target_date}. Ofrece otra fecha o "
+                    f"vuelve a llamar sin target_date para ver las opciones default."
+                    if target_date
+                    else "No hay horarios disponibles próximos"
+                )
+                return json.dumps({"slots": [], "message": msg})
             return json.dumps({"slots": slots}, default=str)
 
         if name == "book_meeting":

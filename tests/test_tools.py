@@ -43,9 +43,10 @@ def test_book_meeting_required_args():
 async def test_execute_tool_dispatches_get_available_slots(monkeypatch):
     captured = {}
 
-    async def fake_slots(pool, days_ahead):
+    async def fake_slots(pool, days_ahead, target_date=None):
         captured["pool"] = pool
         captured["days_ahead"] = days_ahead
+        captured["target_date"] = target_date
         return [{"start_iso": "2026-05-10T15:00:00+00:00"}]
 
     monkeypatch.setattr(tools_module, "get_available_slots", fake_slots)
@@ -54,19 +55,49 @@ async def test_execute_tool_dispatches_get_available_slots(monkeypatch):
     result = await execute_tool("get_available_slots", {"days_ahead": 7}, ctx)
     parsed = json.loads(result)
 
-    assert captured == {"pool": "POOL_SENTINEL", "days_ahead": 7}
+    assert captured == {"pool": "POOL_SENTINEL", "days_ahead": 7, "target_date": None}
     assert parsed["slots"][0]["start_iso"] == "2026-05-10T15:00:00+00:00"
 
 
 @pytest.mark.asyncio
+async def test_execute_tool_get_slots_with_target_date(monkeypatch):
+    captured = {}
+
+    async def fake_slots(pool, days_ahead, target_date=None):
+        captured["target_date"] = target_date
+        return [{"start_iso": "2026-05-15T15:00:00+00:00"}]
+
+    monkeypatch.setattr(tools_module, "get_available_slots", fake_slots)
+    ctx = ToolContext(pool=None, wa_id="x")
+    result = json.loads(await execute_tool(
+        "get_available_slots", {"target_date": "2026-05-15"}, ctx,
+    ))
+    assert captured["target_date"] == "2026-05-15"
+    assert result["slots"][0]["start_iso"] == "2026-05-15T15:00:00+00:00"
+
+
+@pytest.mark.asyncio
 async def test_execute_tool_get_slots_default_days(monkeypatch):
-    async def fake_slots(pool, days_ahead):
+    async def fake_slots(pool, days_ahead, target_date=None):
         return []
     monkeypatch.setattr(tools_module, "get_available_slots", fake_slots)
     ctx = ToolContext(pool=None, wa_id="x")
     result = json.loads(await execute_tool("get_available_slots", {}, ctx))
     assert result["slots"] == []
     assert "message" in result
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_get_slots_target_date_empty_message(monkeypatch):
+    async def fake_slots(pool, days_ahead, target_date=None):
+        return []
+    monkeypatch.setattr(tools_module, "get_available_slots", fake_slots)
+    ctx = ToolContext(pool=None, wa_id="x")
+    result = json.loads(await execute_tool(
+        "get_available_slots", {"target_date": "2026-05-15"}, ctx,
+    ))
+    assert result["slots"] == []
+    assert "2026-05-15" in result["message"]
 
 
 @pytest.mark.asyncio
