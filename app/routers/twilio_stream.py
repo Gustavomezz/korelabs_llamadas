@@ -30,13 +30,14 @@ from app.tenant_resolver import normalize_e164_to_wa_id
 
 router = APIRouter(tags=["twilio"])
 
-# Greeting que mandamos en `response.create` inicial. El prompt principal
-# vive en bot_configs.voice_prompt; este hint solo le dice al modelo que
-# tome la iniciativa para que la llamada no arranque en silencio.
-GREETING_HINT = (
-    "Saluda con calidez en español, preséntate brevemente como Kora de "
-    "Korelabs y pregunta con quién tienes el gusto."
-)
+# Greeting hint: solo un trigger neutro para que el bot tome la iniciativa
+# y arranque la llamada (sin esto el modelo esperaría a que el caller hable
+# primero, lo cual genera silencio incómodo). NO dictamos contenido —
+# dejamos que el system prompt drive el flujo (saludo + presentación +
+# pregunta principal según el prompt activo). Si dictamos algo aquí entra
+# en conflicto con el system prompt y el modelo se enreda en turnos
+# posteriores.
+GREETING_HINT = "Empieza la conversación siguiendo tu system prompt."
 
 
 @router.websocket("/twilio/media-stream")

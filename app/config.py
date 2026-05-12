@@ -31,10 +31,12 @@ class Settings(BaseSettings):
     # Voz Grok: eve | ara | rex | sal | leo. ara es femenina cálida (más
     # parecida al estilo de "Kora" de OpenAI/cedar).
     grok_voice: str = "ara"
-    # 'minimal' (más rápido, suficiente para calificación de leads) | 'low' |
-    # 'medium' | 'high' | 'xhigh'. Default minimal: ahorra ~450ms en
-    # tiempo a primer audio comparado con 'low'.
-    openai_reasoning_effort: str = "minimal"
+    # 'minimal' (más rápido) | 'low' | 'medium' | 'high' | 'xhigh'.
+    # 'low' es el recomendado por OpenAI para voz en producción: balance
+    # entre latencia y instruction-following. 'minimal' a veces salta pasos
+    # en flujos estructurados (greeting → main question → listen → offer).
+    # Sube a 'medium' si el bot sigue saltándose pasos del prompt.
+    openai_reasoning_effort: str = "low"
     # 'server_vad' detecta fin de turno por silencio en ms (configurable
     # abajo). 'semantic_vad' usa modelo NLU pero tiene timeout mínimo ~1-2s
     # incluso con eagerness=high. Para baja latencia preferimos server_vad
