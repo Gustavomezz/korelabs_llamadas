@@ -197,14 +197,18 @@ class AudioBridge:
                     # enviado, para no confundir eco inmediato del bot con
                     # speech del caller.
                     if not self._response_active:
-                        logger.debug("vad: user speech_started call_id=%s", self.call_id)
+                        logger.info("vad: user speech_started (bot idle) call_id=%s", self.call_id)
                     elif (
                         self._response_audio_started_at is None
                         or (time.monotonic() - self._response_audio_started_at) * 1000 < settings.barge_in_guard_ms
                     ):
-                        logger.debug(
-                            "barge-in suppressed (within guard) call_id=%s",
-                            self.call_id,
+                        elapsed = (
+                            int((time.monotonic() - self._response_audio_started_at) * 1000)
+                            if self._response_audio_started_at else 0
+                        )
+                        logger.info(
+                            "barge-in SUPPRESSED (within guard %dms): elapsed=%dms call_id=%s",
+                            settings.barge_in_guard_ms, elapsed, self.call_id,
                         )
                     else:
                         # Barge-in real. Hay que hacer DOS cosas:
