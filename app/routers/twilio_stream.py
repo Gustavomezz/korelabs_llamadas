@@ -30,15 +30,20 @@ from app.tenant_resolver import normalize_e164_to_wa_id
 
 router = APIRouter(tags=["twilio"])
 
-# Greeting hint: arranca el primer turno. Si solo decimos "empieza", el
-# modelo improvisa un saludo genérico ("¿en qué te puedo ayudar?"). Le
-# damos la estructura (saludo + presentación + pregunta principal) sin
-# dictar palabras textuales — el system prompt define el contenido exacto.
+# Greeting hint: HARDCODEAMOS la apertura textual del primer turno.
+# Probamos hints abstractos ("sigue tu system prompt", "haz tu pregunta
+# principal") y el modelo improvisa cosas genéricas ("¿en qué te puedo
+# ayudar?"). El response.create.instructions tiene prioridad sobre el
+# system prompt para ESE turno, así que aquí dictamos el opener exacto.
+# Si la pregunta principal cambia, hay que actualizar este string Y
+# (opcionalmente) el system prompt en openai.com en sincronía.
 GREETING_HINT = (
-    "Arranca el primer turno haciendo TRES cosas en una sola respuesta corta: "
-    "1) saluda con calidez, 2) preséntate como Kora de Korelabs, "
-    "3) haz tu pregunta principal según tu system prompt. "
-    "No preguntes el nombre del caller todavía; eso viene después si aplica."
+    "Saluda muy breve y di textualmente: "
+    '"Hola, soy Kora, de Korelabs. ¿Quieres automatizar tu servicio al '
+    'cliente, o procesos internos de tu negocio?". '
+    "Eso es TODO tu primer turno. No preguntes 'en qué te puedo ayudar', "
+    "no pidas el nombre todavía, no menciones agendar/revisar/mover citas. "
+    "Después de esta pregunta, espera la respuesta del usuario."
 )
 
 
