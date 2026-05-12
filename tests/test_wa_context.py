@@ -103,8 +103,26 @@ def test_returning_greeting_omits_name_part_when_unknown():
     assert "¡Hola!" in hint
 
 
-def test_returning_greeting_acknowledges_whatsapp():
-    """Debe ser explícito de que ya hablaron por WA, para que sea claro
-    al caller que el bot 'lo conoce'."""
+def test_returning_greeting_avoids_outbound_phrasing():
+    """La llamada es inbound (usuario llamó al bot). El greeting NO debe
+    decir 'te marco', 'te llamo' o similares — eso implica que el bot
+    inició la llamada, lo cual es falso."""
     hint = _build_returning_user_greeting_hint({"name": "Ana"})
-    assert "WhatsApp" in hint
+    lower = hint.lower()
+    # El hint le DICE al modelo qué decir + qué NO decir; las prohibiciones
+    # aparecerán en el texto de instrucciones — checamos que la frase
+    # textual a decir NO contenga "te marco" / "te llamo".
+    quoted_section = hint.split('"')[1] if '"' in hint else hint
+    assert "te marco" not in quoted_section.lower()
+    assert "te llamo" not in quoted_section.lower()
+
+
+def test_context_block_warns_inbound_direction():
+    """El bloque de contexto debe instruir al modelo que es llamada inbound
+    para evitar phrasing de llamada saliente."""
+    block = _build_wa_context_block({
+        "name": "Ana", "clinic_name": None,
+        "qualified": False, "total_messages": 3,
+        "recent_messages": [_msg("user", "hola")],
+    })
+    assert "INBOUND" in block or "inbound" in block
