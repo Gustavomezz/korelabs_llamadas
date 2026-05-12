@@ -38,11 +38,11 @@ router = APIRouter(tags=["twilio"])
 # Si la pregunta principal cambia, hay que actualizar este string Y
 # (opcionalmente) el system prompt en openai.com en sincronía.
 GREETING_HINT = (
-    "Saluda muy breve y di textualmente: "
-    '"Hola, soy Kora, de Korelabs. ¿Quieres automatizar tu servicio al '
-    'cliente, o procesos internos de tu negocio?". '
+    "Di textualmente y nada más: "
+    '"Hola, te habla Kora, asistente comercial de Korelabs. ¿Con quién '
+    'tengo el gusto?". '
     "Eso es TODO tu primer turno. No preguntes 'en qué te puedo ayudar', "
-    "no pidas el nombre todavía, no menciones agendar/revisar/mover citas. "
+    "no ofrezcas agendar todavía, no menciones automatización. "
     "Después de esta pregunta, espera la respuesta del usuario."
 )
 
