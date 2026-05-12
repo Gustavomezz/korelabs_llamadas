@@ -222,8 +222,13 @@ class AudioBridge:
                 elif kind == "error":
                     err = event.get("error", {})
                     logger.error(
-                        "openai realtime error call_id=%s code=%s message=%s",
-                        self.call_id, err.get("code"), err.get("message"),
+                        "openai realtime error call_id=%s type=%s code=%s param=%s message=%s event_id=%s",
+                        self.call_id,
+                        err.get("type"),
+                        err.get("code"),
+                        err.get("param"),
+                        err.get("message"),
+                        event.get("event_id"),
                     )
         except Exception:
             logger.exception("openai pump error call_id=%s events_seen=%d", self.call_id, event_count)

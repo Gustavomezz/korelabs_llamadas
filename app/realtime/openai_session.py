@@ -92,8 +92,18 @@ async def open_session(
         spec, instructions, greeting_hint, voice, tools or [],
     )
     await session.send(update_event)
-    logger.info("realtime[%s]: session.update sent (voice=%s, instructions=%d chars, prompt_id=%s)",
-                spec.name, voice_used, len(instructions), settings.openai_prompt_id or "-")
+    sess = update_event.get("session", {})
+    sent_prompt = sess.get("prompt")
+    sent_instr = sess.get("instructions")
+    logger.info(
+        "realtime[%s]: session.update sent voice=%s model=%s prompt=%s instructions_inline=%s (raw OPENAI_PROMPT_ID=%r)",
+        spec.name,
+        voice_used,
+        settings.openai_realtime_model,
+        sent_prompt or "-",
+        f"{len(sent_instr)} chars" if sent_instr else "no",
+        settings.openai_prompt_id,
+    )
     for evt in greeting_events:
         await session.send(evt)
     logger.info("realtime[%s]: greeting sent (total %d ms since acquire)",
