@@ -132,6 +132,21 @@ class AudioBridge:
                 if event_count == 1:
                     logger.info("openai first event call_id=%s type=%s", self.call_id, kind)
 
+                # Debug del prompt resuelto: session.created/updated echo back
+                # el estado completo. Útil para confirmar si el stored prompt
+                # de OpenAI realmente cargó el contenido que esperamos.
+                if kind in ("session.created", "session.updated"):
+                    sess = event.get("session") or {}
+                    instr = sess.get("instructions") or ""
+                    prompt_obj = sess.get("prompt") or {}
+                    logger.info(
+                        "session %s: instructions_len=%d prompt_obj=%s first200=%r",
+                        kind.split(".")[1],
+                        len(instr),
+                        prompt_obj,
+                        instr[:200],
+                    )
+
                 if kind in AUDIO_DELTA_EVENTS:
                     delta = event.get("delta")
                     if delta:
