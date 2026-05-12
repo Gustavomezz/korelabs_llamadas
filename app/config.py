@@ -44,13 +44,15 @@ class Settings(BaseSettings):
     # Solo aplica a semantic_vad: low|medium|high.
     realtime_vad_eagerness: str = "high"
     # Solo aplica a server_vad.
-    # threshold: 0.5 (default OpenAI) detecta voz normal por teléfono. Subirlo
-    # a 0.85+ ignora voz baja (también la del caller cuando intenta
-    # interrumpir al bot). El anti-eco del bot lo cubre BARGE_IN_GUARD_MS,
-    # NO el threshold — por eso 0.5 es lo correcto incluso para teléfono.
+    # threshold: 0.5 (default OpenAI) es muy sensible — la VAD dispara con
+    # ruido ambiente, eco residual o respiración, haciendo que el bot crea
+    # que le hablan. 0.7 reduce falsos positivos sin matar el barge-in
+    # legítimo (la voz normal supera 0.7 sin problema). 0.85+ ya bloquea
+    # interrupciones reales. BARGE_IN_GUARD_MS sigue siendo el anti-eco
+    # principal contra el propio audio del bot.
     # silence_duration_ms: principal driver de latencia turn-by-turn.
     # prefix_padding_ms: cuánto audio "antes" del speech incluye en el buffer.
-    realtime_vad_threshold: float = 0.5
+    realtime_vad_threshold: float = 0.7
     realtime_vad_silence_ms: int = 300
     realtime_vad_prefix_ms: int = 200
     # ms mínimos de audio enviado antes de respetar un evento de barge-in.

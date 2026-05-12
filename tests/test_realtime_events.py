@@ -42,12 +42,12 @@ def test_session_update_v2_envelope_defaults():
     # Audio anidado
     assert s["audio"]["input"]["format"] == {"type": "audio/pcmu"}
     assert s["audio"]["output"]["format"] == {"type": "audio/pcmu"}
-    assert s["audio"]["output"]["voice"] == "cedar"
+    assert s["audio"]["output"]["voice"] == "marin"
     assert s["audio"]["input"]["transcription"] == {"model": "whisper-1"}
     # Default ahora server_vad con threshold alto + silence corto (latencia mínima).
     td = s["audio"]["input"]["turn_detection"]
     assert td["type"] == "server_vad"
-    assert td["threshold"] == 0.5  # default actualizado para permitir interrupciones
+    assert td["threshold"] == 0.7  # default: balance entre barge-in y falsos positivos
     assert td["silence_duration_ms"] == 300
     assert td["prefix_padding_ms"] == 200
     assert td["interrupt_response"] is True
@@ -143,12 +143,12 @@ def test_session_update_v1_envelope():
     assert evt["type"] == "session.update"
     assert "type" not in s  # v1 NO tiene session.type
     assert s["modalities"] == ["audio", "text"]
-    assert s["voice"] == "cedar"
+    assert s["voice"] == "marin"
     assert s["input_audio_format"] == "g711_ulaw"
     assert s["output_audio_format"] == "g711_ulaw"
     assert s["input_audio_transcription"] == {"model": "whisper-1"}
     assert s["turn_detection"]["type"] == "server_vad"
-    assert s["turn_detection"]["threshold"] == 0.5
+    assert s["turn_detection"]["threshold"] == 0.7
     assert "audio" not in s
     assert "output_modalities" not in s
 

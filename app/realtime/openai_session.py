@@ -127,7 +127,7 @@ def _build_session_payloads(
         return update, build_greeting_events_grok(greeting_hint), chosen_voice
 
     # default: openai (v1 o v2 según modelo)
-    chosen_voice = voice or "cedar"
+    chosen_voice = voice or "marin"
     prompt_id = settings.openai_prompt_id or None
     update = session_update(
         instructions=instructions,
