@@ -46,21 +46,25 @@ class Settings(BaseSettings):
     # Solo aplica a semantic_vad: low|medium|high.
     realtime_vad_eagerness: str = "high"
     # Solo aplica a server_vad.
-    # threshold: 0.5 (default OpenAI) es muy sensible — la VAD dispara con
-    # ruido ambiente, eco residual o respiración, haciendo que el bot crea
-    # que le hablan. 0.7 reduce falsos positivos sin matar el barge-in
-    # legítimo (la voz normal supera 0.7 sin problema). 0.85+ ya bloquea
-    # interrupciones reales. BARGE_IN_GUARD_MS sigue siendo el anti-eco
-    # principal contra el propio audio del bot.
+    # threshold: el MISMO threshold gatea tanto el inicio de un nuevo turno
+    # como el barge-in (interrupción mientras el bot habla). No hay forma
+    # de separarlos en server_vad. Tradeoff:
+    # - 0.5 (default OpenAI): barge-in funciona bien, pero VAD dispara con
+    #   ruido ambiente/breathing → falsos positivos durante silencio.
+    # - 0.7+: pocos falsos positivos, pero voz débil por teléfono no llega
+    #   a interrumpir al bot.
+    # 0.5 prioriza interrupciones (mejor UX cuando el bot se pasa hablando).
+    # El anti-eco del bot lo cubre BARGE_IN_GUARD_MS (subido a 700ms).
     # silence_duration_ms: principal driver de latencia turn-by-turn.
     # prefix_padding_ms: cuánto audio "antes" del speech incluye en el buffer.
-    realtime_vad_threshold: float = 0.7
+    realtime_vad_threshold: float = 0.5
     realtime_vad_silence_ms: int = 300
     realtime_vad_prefix_ms: int = 200
     # ms mínimos de audio enviado antes de respetar un evento de barge-in.
     # Sirve de guard contra eco inmediato del bot que la VAD detecta como
-    # speech del caller. 500ms es un punto seguro empíricamente.
-    barge_in_guard_ms: int = 500
+    # speech del caller. Subido a 700ms para compensar threshold 0.5 más
+    # sensible (sin esto el bot se interrumpiría a sí mismo con su eco).
+    barge_in_guard_ms: int = 700
     # Pool de WebSockets pre-conectadas a OpenAI. Cada conexión idle ahorra
     # ~500 ms de TCP+TLS+upgrade en cold start. 0 deshabilita el pool.
     realtime_ws_pool_size: int = 2
