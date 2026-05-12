@@ -108,7 +108,7 @@ def session_update(
         if tools:
             session["tools"] = list(tools)
         if max_output_tokens:
-            session["max_response_output_tokens"] = max_output_tokens
+            session["max_output_tokens"] = max_output_tokens
         return {"type": "session.update", "session": session}
 
     # Envelope v1 (legacy)
