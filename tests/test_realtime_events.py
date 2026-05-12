@@ -47,7 +47,7 @@ def test_session_update_v2_envelope_defaults():
     # Default ahora server_vad con threshold alto + silence corto (latencia mínima).
     td = s["audio"]["input"]["turn_detection"]
     assert td["type"] == "server_vad"
-    assert td["threshold"] == 0.5  # default: prioriza barge-in (eco lo maneja guard_ms)
+    assert td["threshold"] == 0.7  # default: anti-falsos-positivos; barge-in se resuelve con truncate
     assert td["silence_duration_ms"] == 300
     assert td["prefix_padding_ms"] == 200
     assert td["interrupt_response"] is True
@@ -148,7 +148,7 @@ def test_session_update_v1_envelope():
     assert s["output_audio_format"] == "g711_ulaw"
     assert s["input_audio_transcription"] == {"model": "whisper-1"}
     assert s["turn_detection"]["type"] == "server_vad"
-    assert s["turn_detection"]["threshold"] == 0.5
+    assert s["turn_detection"]["threshold"] == 0.7
     assert "audio" not in s
     assert "output_modalities" not in s
 

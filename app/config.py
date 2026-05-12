@@ -53,18 +53,19 @@ class Settings(BaseSettings):
     #   ruido ambiente/breathing → falsos positivos durante silencio.
     # - 0.7+: pocos falsos positivos, pero voz débil por teléfono no llega
     #   a interrumpir al bot.
-    # 0.5 prioriza interrupciones (mejor UX cuando el bot se pasa hablando).
-    # El anti-eco del bot lo cubre BARGE_IN_GUARD_MS (subido a 700ms).
+    # 0.7 reduce falsos positivos de ruido ambiente / breathing. La
+    # interrupción no se resuelve aflojando este threshold sino con
+    # response.cancel explícito desde nuestro código (ver audio_bridge).
     # silence_duration_ms: principal driver de latencia turn-by-turn.
     # prefix_padding_ms: cuánto audio "antes" del speech incluye en el buffer.
-    realtime_vad_threshold: float = 0.5
+    realtime_vad_threshold: float = 0.7
     realtime_vad_silence_ms: int = 300
     realtime_vad_prefix_ms: int = 200
     # ms mínimos de audio enviado antes de respetar un evento de barge-in.
     # Sirve de guard contra eco inmediato del bot que la VAD detecta como
-    # speech del caller. Subido a 700ms para compensar threshold 0.5 más
-    # sensible (sin esto el bot se interrumpiría a sí mismo con su eco).
-    barge_in_guard_ms: int = 700
+    # speech del caller. 500ms es un punto seguro empíricamente con
+    # threshold 0.7.
+    barge_in_guard_ms: int = 500
     # Pool de WebSockets pre-conectadas a OpenAI. Cada conexión idle ahorra
     # ~500 ms de TCP+TLS+upgrade en cold start. 0 deshabilita el pool.
     realtime_ws_pool_size: int = 2

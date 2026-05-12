@@ -75,6 +75,11 @@ class AudioBridge:
         # tarda o no llega; acumulamos deltas y flusheamos en `.done` o en
         # `response.done` (lo que llegue primero). Indexed por response_id.
         self._assistant_transcript_buf: dict[str, str] = {}
+        # item_id del mensaje actual del assistant. Lo capturamos del primer
+        # audio.delta de cada response para poder mandar
+        # conversation.item.truncate al hacer barge-in (limpiar Twilio NO
+        # detiene al modelo — el truncate sí). Reset en response.done.
+        self._last_assistant_item_id: str | None = None
 
     async def run(self) -> None:
         t1 = asyncio.create_task(self._pump_twilio_to_openai(), name="twilio->openai")
@@ -136,6 +141,11 @@ class AudioBridge:
                                 self.call_id, kind, len(delta), self.twilio.application_state.name,
                             )
                             self._first_audio_delta_logged = True
+                        # Capturar item_id de cada respuesta (lo necesitamos
+                        # para conversation.item.truncate en barge-in).
+                        item_id = event.get("item_id")
+                        if item_id and item_id != self._last_assistant_item_id:
+                            self._last_assistant_item_id = item_id
                         if self._response_audio_started_at is None:
                             self._response_audio_started_at = time.monotonic()
                             # Latencia REAL turn-by-turn: tiempo desde que el
@@ -163,6 +173,7 @@ class AudioBridge:
                 elif kind == "response.done":
                     self._response_active = False
                     self._response_audio_started_at = None
+                    self._last_assistant_item_id = None
                     resp = event.get("response") or {}
                     rid = resp.get("id")
                     # Loguea métricas de prompt caching para validar que el
@@ -196,7 +207,33 @@ class AudioBridge:
                             self.call_id,
                         )
                     else:
-                        logger.info("barge-in: clearing twilio buffer call_id=%s", self.call_id)
+                        # Barge-in real. Hay que hacer DOS cosas:
+                        # 1. Decirle a OpenAI que trunque la respuesta en
+                        #    el punto donde estamos (sin esto el modelo
+                        #    sigue generando audio aunque ya nadie lo oiga).
+                        # 2. Limpiar el buffer de Twilio para que deje de
+                        #    reproducir el audio que ya estaba en vuelo.
+                        elapsed_ms = (
+                            int((time.monotonic() - self._response_audio_started_at) * 1000)
+                            if self._response_audio_started_at
+                            else 0
+                        )
+                        if self._last_assistant_item_id:
+                            await self.openai.send({
+                                "type": "conversation.item.truncate",
+                                "item_id": self._last_assistant_item_id,
+                                "content_index": 0,
+                                "audio_end_ms": elapsed_ms,
+                            })
+                            logger.info(
+                                "barge-in: truncate item=%s at %d ms call_id=%s",
+                                self._last_assistant_item_id, elapsed_ms, self.call_id,
+                            )
+                        else:
+                            logger.info(
+                                "barge-in: no item_id yet, only clearing twilio call_id=%s",
+                                self.call_id,
+                            )
                         await self._send_twilio(twilio_clear_event(self.stream_sid))
                 elif kind in ASSISTANT_TRANSCRIPT_DELTA_EVENTS:
                     rid = event.get("response_id") or ""
