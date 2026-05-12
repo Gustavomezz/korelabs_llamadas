@@ -14,6 +14,12 @@ import asyncpg
 import httpx
 
 from app.config import logger, settings
+from app.integrations.whatsapp import (
+    extract_wa_message_id,
+    is_configured as whatsapp_is_configured,
+    send_whatsapp_message,
+)
+from app.models.conversations import save_outgoing_wa_message
 from app.models.google_tokens import get_latest_token, save_google_tokens
 from app.models.meetings import save_meeting, save_meeting_action
 
@@ -335,11 +341,39 @@ async def book_meeting(
         details=f"{attendee_name} - {clinic_name}".strip(" -"),
     )
 
+    # Enviar Meet link por WhatsApp si está configurado. Esto NO bloquea el
+    # booking — Google Calendar ya mandó el invite por correo de cualquier
+    # forma. Errores se loguean y siguen.
+    whatsapp_sent = False
+    if meet_link and wa_id and whatsapp_is_configured():
+        first_name = (attendee_name or "").split(" ")[0] or "hola"
+        wa_text = (
+            f"¡Listo, {first_name}! 🎉\n\n"
+            f"Tu llamada con Gustavo de Korelabs está agendada.\n\n"
+            f"📅 Únete por Google Meet:\n{meet_link}\n\n"
+            f"También te llega la invitación a tu correo.\n"
+            f"¡Nos vemos pronto!"
+        )
+        wa_response = await send_whatsapp_message(wa_id, wa_text)
+        if wa_response:
+            whatsapp_sent = True
+            wa_message_id = extract_wa_message_id(wa_response)
+            try:
+                await save_outgoing_wa_message(
+                    pool, wa_id=wa_id, content=wa_text, wa_message_id=wa_message_id,
+                )
+            except Exception:
+                logger.exception(
+                    "could not persist WA message to conversations table wa_id=%s",
+                    wa_id,
+                )
+
     return {
         "success": True,
         "event_id": result["id"],
         "meet_link": meet_link,
         "html_link": result.get("htmlLink", ""),
+        "whatsapp_sent": whatsapp_sent,
     }
 
 

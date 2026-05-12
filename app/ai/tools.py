@@ -57,7 +57,12 @@ REALTIME_TOOLS: list[dict] = [
         "name": "book_meeting",
         "description": (
             "Crea una reunión en Google Calendar con link de Google Meet. "
-            "Usa SOLO un horario obtenido de get_available_slots."
+            "Usa SOLO un horario obtenido de get_available_slots. "
+            "Automáticamente: (1) Google manda invitación al correo del "
+            "attendee, (2) si está configurado WhatsApp, también se manda "
+            "el Meet link al WhatsApp del caller (el campo whatsapp_sent en "
+            "la respuesta indica si se envió). Confirma al usuario ambos "
+            "canales solo si whatsapp_sent es true."
         ),
         "parameters": {
             "type": "object",

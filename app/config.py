@@ -99,5 +99,13 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     calendar_timezone: str = "America/Mexico_City"
 
+    # WhatsApp Cloud API (mismas credenciales que el bot de WA del tenant).
+    # Se usa para mandar el link de Google Meet al caller después de que
+    # el bot agende. Si están vacías, el envío se salta silenciosamente y
+    # el correo de Google Calendar sigue siendo el canal principal.
+    whatsapp_token: str = ""
+    whatsapp_phone_number_id: str = ""
+    graph_api_version: str = "v21.0"
+
 
 settings = Settings()
