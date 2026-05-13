@@ -152,38 +152,66 @@ def confirm(question: str, default: bool = False) -> bool:
     return answer in ("y", "yes", "s", "si", "sí")
 
 
-def gql(query: str, variables: dict | None = None) -> dict:
-    """Railway GraphQL via curl (evita SSL drama de Python en macOS)."""
+def gql(query: str, variables: dict | None = None, retries: int = 0) -> dict:
+    """Railway GraphQL via curl (evita SSL drama de Python en macOS).
+
+    retries: nº de reintentos ante errores de red transitorios (upstream
+    connect error / timeout / 5xx). Solo usar en mutaciones que sean
+    idempotentes o donde el primer fallo dejó nada hecho.
+    """
     token = require_env("RAILWAY_API_TOKEN")
     payload = {"query": query}
     if variables:
         payload["variables"] = variables
-    try:
-        result = subprocess.run(
-            [
-                "curl", "-sS", "--max-time", "60",
-                "-X", "POST", RAILWAY_ENDPOINT,
-                "-H", f"Authorization: Bearer {token}",
-                "-H", "Content-Type: application/json",
-                "--data-binary", json.dumps(payload),
-            ],
-            capture_output=True, text=True, timeout=65,
-        )
-    except subprocess.TimeoutExpired:
-        err("Railway API timeout (>60s)")
-        sys.exit(1)
-    if result.returncode != 0:
-        err(f"curl exit {result.returncode}: {result.stderr[:300]}")
-        sys.exit(1)
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        err(f"respuesta no es JSON: {result.stdout[:300]}")
-        sys.exit(1)
-    if "errors" in data:
-        err(f"GraphQL errors:\n{json.dumps(data['errors'], indent=2)}")
-        sys.exit(1)
-    return data.get("data", {})
+
+    attempt = 0
+    while True:
+        try:
+            result = subprocess.run(
+                [
+                    "curl", "-sS", "--max-time", "60",
+                    "-X", "POST", RAILWAY_ENDPOINT,
+                    "-H", f"Authorization: Bearer {token}",
+                    "-H", "Content-Type: application/json",
+                    "--data-binary", json.dumps(payload),
+                ],
+                capture_output=True, text=True, timeout=65,
+            )
+        except subprocess.TimeoutExpired:
+            if attempt < retries:
+                attempt += 1
+                warn(f"timeout — reintentando ({attempt}/{retries})...")
+                time.sleep(2 ** attempt)
+                continue
+            err("Railway API timeout (>60s)")
+            sys.exit(1)
+
+        if result.returncode != 0:
+            err(f"curl exit {result.returncode}: {result.stderr[:300]}")
+            sys.exit(1)
+
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            # "upstream connect error" o similar — body no es JSON
+            transient = (
+                "upstream connect error" in result.stdout.lower()
+                or "503" in result.stdout
+                or "502" in result.stdout
+                or "504" in result.stdout
+            )
+            if transient and attempt < retries:
+                attempt += 1
+                warn(f"error transitorio: {result.stdout[:80]} — reintentando ({attempt}/{retries})...")
+                time.sleep(2 ** attempt)
+                continue
+            err(f"respuesta no es JSON: {result.stdout[:300]}")
+            sys.exit(1)
+
+        if "errors" in data:
+            err(f"GraphQL errors:\n{json.dumps(data['errors'], indent=2)}")
+            sys.exit(1)
+        return data.get("data", {})
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -515,36 +543,110 @@ def find_staging_project() -> dict | None:
     return None
 
 
+def _get_project_details(project_id: str) -> dict:
+    """Devuelve dict con id, environment_id (production), y lista de servicios."""
+    data = gql(
+        """
+        query($id: String!) {
+          project(id: $id) {
+            id
+            name
+            environments { edges { node { id name } } }
+            services { edges { node { id name } } }
+          }
+        }
+        """,
+        {"id": project_id},
+    )
+    p = data.get("project") or {}
+    envs = p.get("environments", {}).get("edges", [])
+    prod_env_id = next(
+        (e["node"]["id"] for e in envs if e["node"]["name"] == "production"),
+        envs[0]["node"]["id"] if envs else None,
+    )
+    services = [
+        {"id": s["node"]["id"], "name": s["node"]["name"]}
+        for s in p.get("services", {}).get("edges", [])
+    ]
+    return {
+        "id": p.get("id"),
+        "name": p.get("name"),
+        "environment_id": prod_env_id,
+        "services": services,
+    }
+
+
+def _create_bot_service(project_id: str) -> str:
+    """Crea el servicio bot-mt en el proyecto. Retry si Railway falla transitoriamente."""
+    create_svc = gql(
+        """
+        mutation($input: ServiceCreateInput!) {
+          serviceCreate(input: $input) {
+            id
+            name
+          }
+        }
+        """,
+        {
+            "input": {
+                "projectId": project_id,
+                "name": "bot-mt",
+                "branch": BOT_BRANCH,
+                "source": {"repo": BOT_REPO},
+            },
+        },
+        retries=3,  # Railway suele tener errores transitorios al crear servicios con clone
+    )
+    svc = create_svc.get("serviceCreate") or {}
+    service_id = svc.get("id")
+    if not service_id:
+        err(f"No se creó el servicio. Respuesta: {create_svc}")
+        sys.exit(1)
+    return service_id
+
+
 def phase_3_create_staging_project(dry_run: bool = False) -> dict:
     section("FASE 3: Crear proyecto Railway staging del bot multi-tenant")
 
     info(f"Buscando proyecto existente '{STAGING_PROJECT_NAME}'...")
     existing = find_staging_project()
+
     if existing:
         ok(f"Proyecto ya existe: id={existing['id']}")
-        # Obtener detalles
-        data = gql(
-            """
-            query($id: String!) {
-              project(id: $id) {
-                id
-                name
-                environments { edges { node { id name } } }
-                services { edges { node { id name } } }
-              }
-            }
-            """,
-            {"id": existing["id"]},
-        )
-        p = data.get("project") or {}
-        envs = [e["node"]["name"] for e in p.get("environments", {}).get("edges", [])]
-        svcs = [s["node"]["name"] for s in p.get("services", {}).get("edges", [])]
-        info(f"environments: {envs}")
-        info(f"services: {svcs}")
-        return p
+        details = _get_project_details(existing["id"])
+        info(f"environments: {[ details['environment_id'] ]}")
+        info(f"services: {[s['name'] for s in details['services']]}")
 
+        # Verificar si el servicio bot-mt está
+        bot_svc = next((s for s in details["services"] if s["name"] == "bot-mt"), None)
+        if bot_svc:
+            ok(f"Servicio 'bot-mt' ya existe: id={bot_svc['id']}")
+            return {
+                "id": details["id"],
+                "environment_id": details["environment_id"],
+                "service_id": bot_svc["id"],
+            }
+
+        # Proyecto está pero le falta el servicio (caso del crash anterior)
+        warn("Proyecto existe pero le falta el servicio 'bot-mt' (probablemente un fallo previo).")
+        if dry_run:
+            warn(f"DRY RUN: crearía servicio bot-mt en proyecto existente {details['id']}")
+            return {}
+        if not confirm("Crear el servicio bot-mt en el proyecto existente?", default=True):
+            warn("Cancelado por usuario")
+            sys.exit(0)
+        info(f"Creando servicio desde repo {BOT_REPO} branch {BOT_BRANCH}...")
+        service_id = _create_bot_service(details["id"])
+        ok(f"Servicio creado: id={service_id}")
+        return {
+            "id": details["id"],
+            "environment_id": details["environment_id"],
+            "service_id": service_id,
+        }
+
+    # No existe nada: crear proyecto + servicio
     if dry_run:
-        warn(f"DRY RUN: crearía proyecto '{STAGING_PROJECT_NAME}' + servicio del bot")
+        warn(f"DRY RUN: crearía proyecto '{STAGING_PROJECT_NAME}' + servicio bot-mt")
         return {}
 
     if not confirm(
@@ -562,8 +664,7 @@ def phase_3_create_staging_project(dry_run: bool = False) -> dict:
             id
             name
             environments {
-              edges { node { id name } }
-            }
+              edges { node { id name } } }
           }
         }
         """,
@@ -584,30 +685,8 @@ def phase_3_create_staging_project(dry_run: bool = False) -> dict:
     ok(f"environment production: id={env_id}")
 
     info(f"Creando servicio desde repo {BOT_REPO} branch {BOT_BRANCH}...")
-    create_svc = gql(
-        """
-        mutation($input: ServiceCreateInput!) {
-          serviceCreate(input: $input) {
-            id
-            name
-          }
-        }
-        """,
-        {
-            "input": {
-                "projectId": project_id,
-                "name": "bot-mt",
-                "branch": BOT_BRANCH,
-                "source": {"repo": BOT_REPO},
-            },
-        },
-    )
-    svc = create_svc.get("serviceCreate") or {}
-    service_id = svc.get("id")
-    if not service_id:
-        err(f"No se creó el servicio. Respuesta: {create_svc}")
-        sys.exit(1)
-    ok(f"Servicio creado: id={service_id} name={svc.get('name')}")
+    service_id = _create_bot_service(project_id)
+    ok(f"Servicio creado: id={service_id}")
 
     return {
         "id": project_id,
