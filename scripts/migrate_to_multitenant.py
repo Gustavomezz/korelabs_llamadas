@@ -842,9 +842,10 @@ async def show_status() -> None:
         # Fase 1: schema
         log()
         log("FASE 1: Control plane schema")
-        tables_ok = 0
-        for tbl in ("tenants", "tenant_modules", "tenant_credentials",
-                    "tenant_features", "tenant_branding", "audit_log"):
+        required_tables = ("tenants", "tenant_modules", "tenant_credentials",
+                           "tenant_features", "tenant_branding", "audit_log")
+        existing_tables: set[str] = set()
+        for tbl in required_tables:
             exists = await conn.fetchval(
                 "SELECT EXISTS (SELECT FROM information_schema.tables "
                 "WHERE table_schema='public' AND table_name=$1)", tbl,
@@ -852,10 +853,30 @@ async def show_status() -> None:
             mark = "✓" if exists else "✗"
             log(f"  {mark} table {tbl}")
             if exists:
-                tables_ok += 1
-        log(f"  → {tables_ok}/6 tablas")
+                existing_tables.add(tbl)
+        log(f"  → {len(existing_tables)}/6 tablas")
 
-        # Fase 2: tenant + creds
+        # Si tenants no tiene las columnas nuevas, la Fase 1 está incompleta
+        plan_col_exists = await conn.fetchval(
+            "SELECT EXISTS (SELECT FROM information_schema.columns "
+            "WHERE table_schema='public' AND table_name='tenants' "
+            "AND column_name='plan')"
+        )
+        if not plan_col_exists:
+            log()
+            warn("Las columnas nuevas de `tenants` (plan, subscription_status, "
+                 "timezone, locale) NO existen todavía. Correr Fase 1 primero.")
+            log()
+            log("FASE 2: pendiente (depende de Fase 1)")
+            log("FASE 3: Proyecto Railway staging")
+            staging = find_staging_project()
+            if staging:
+                log(f"  ✓ proyecto '{STAGING_PROJECT_NAME}' existe (id={staging['id']})")
+            else:
+                log(f"  ✗ proyecto '{STAGING_PROJECT_NAME}' NO existe")
+            return
+
+        # Fase 2: tenant + creds (sólo si Fase 1 está aplicada)
         log()
         log("FASE 2: Tenant Korelabs + creds")
         tenant = await conn.fetchrow(
@@ -866,17 +887,19 @@ async def show_status() -> None:
         if tenant:
             log(f"  ✓ tenant existe: id={tenant['id']} plan={tenant['plan']}")
             log(f"    whatsapp_phone_number_id = {tenant['whatsapp_phone_number_id']}")
-            creds_count = await conn.fetchval(
-                "SELECT COUNT(*) FROM tenant_credentials WHERE tenant_id = $1",
-                tenant["id"],
-            )
-            log(f"  → {creds_count} credenciales sembradas")
-            modules = await conn.fetch(
-                "SELECT module_key, is_enabled FROM tenant_modules WHERE tenant_id = $1",
-                tenant["id"],
-            )
-            log(f"  → {len(modules)} módulos: " +
-                ", ".join(f"{m['module_key']}={'ON' if m['is_enabled'] else 'OFF'}" for m in modules))
+            if "tenant_credentials" in existing_tables:
+                creds_count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM tenant_credentials WHERE tenant_id = $1",
+                    tenant["id"],
+                )
+                log(f"  → {creds_count} credenciales sembradas")
+            if "tenant_modules" in existing_tables:
+                modules = await conn.fetch(
+                    "SELECT module_key, is_enabled FROM tenant_modules WHERE tenant_id = $1",
+                    tenant["id"],
+                )
+                log(f"  → {len(modules)} módulos: " +
+                    ", ".join(f"{m['module_key']}={'ON' if m['is_enabled'] else 'OFF'}" for m in modules))
         else:
             log(f"  ✗ tenant '{KORELABS_SLUG}' NO existe")
 
