@@ -4,8 +4,13 @@ Cómo onboardear un cliente nuevo de manera profesional y consistente.
 Este documento es la fuente de verdad. Si algo del proceso cambia, se
 actualiza aquí.
 
-> **Estado:** versión 1.0 (manual asistido). v2 (self-service) requiere
-> Fase 4 de la migración completa.
+> **Estado:** versión 1.1 (manual asistido con magic link).
+>
+> **Restricción importante:** Korelabs aún no tiene verificación Meta como
+> Tech Provider, por lo que NO existe self-service para vincular cuentas
+> WhatsApp Business. Las credenciales WhatsApp las administra Gustavo
+> manualmente. El cliente solo fija su password y personaliza su branding
+> vía magic link.
 
 ---
 
@@ -58,83 +63,99 @@ actualiza aquí.
 - [ ] Cuenta Google para Calendar (idealmente del consultorio, no personal)
 - [ ] (Opcional) Cuenta Twilio si quiere Voice y prefiere su propia cuenta
 
-### Pasos (modo v1 — manual asistido)
+### Pasos (flujo actual — manual con magic link)
+
+**Tiempo total:** ~20–25 min Gustavo + ~5 min cliente.
 
 1. **Crear BD del cliente en Railway**
    - Ir al proyecto template "korelabs-tenant-db"
-   - Click "Duplicate"
-   - Renombrar a `korelabs-tenant-{slug}` (ej. `korelabs-tenant-dental-roma`)
+   - Click "Duplicate" → renombrar a `korelabs-tenant-{slug}`
    - Copiar `DATABASE_PUBLIC_URL`
 
 2. **Crear tenant en el dashboard**
    - Login como admin en `https://dashboard.korelabs.app`
-   - Ir a `/admin/tenants/new`
-   - Llenar:
-     - Slug: kebab-case único (ej. `dental-roma`)
+   - `/admin/tenants/new` → llenar:
+     - Slug: kebab-case (`dental-roma`)
      - Display name: nombre comercial del consultorio
-     - Plan: basic | pro | enterprise
      - Database URL: pegar la URL copiada
-     - Timezone: `America/Mexico_City` (default)
-   - Submit → el dashboard ejecuta `korelabs_seed_tenant_defaults(id, plan)`
+     - Owner email: del responsable del consultorio
+     - Password inicial: cualquier valor random (el cliente la sobrescribe vía magic link)
+   - Submit → el sistema crea el tenant + el user owner.
 
-3. **Cargar credenciales del cliente**
-   - En `/admin/tenants/{id}/credentials`, agregar:
-     - `whatsapp_token` (provisto por el cliente; ver guía abajo)
-     - `whatsapp_phone_number_id` (el cliente lo encuentra en developers.facebook.com)
-     - `whatsapp_app_secret` (en la misma página de Meta)
-     - `whatsapp_verify_token` (generar random; será necesario en el siguiente paso)
-   - Si plan ≥ pro: agregar `google_client_id` y `google_client_secret` (compartidos
-     del proyecto Korelabs en GCP, no del cliente)
+3. **Cambiar plan del tenant (si aplica)**
+   - Por ahora se hace vía SQL hasta que tengamos UI:
+     ```sql
+     UPDATE tenants SET plan = 'pro' WHERE slug = 'dental-roma';
+     ```
+   - Re-correr `SELECT korelabs_seed_tenant_defaults(id, 'pro')` para sembrar
+     módulos del plan correcto.
 
-4. **Configurar webhook en Meta**
-   - En Meta for Business → WhatsApp → Configuration
-   - Callback URL: `https://bot.korelabs.app/webhook`
-   - Verify token: el mismo que cargaste arriba
+4. **Pedir las credenciales al cliente**
+   - El cliente debe enviarte (por canal seguro: WhatsApp, no email):
+     - `WHATSAPP_TOKEN` (System User permanent token desde Meta Developers)
+     - `WHATSAPP_PHONE_NUMBER_ID`
+     - `WHATSAPP_APP_SECRET` (Settings → Basic en Meta App)
+     - `WHATSAPP_VERIFY_TOKEN` (cualquier string que el cliente elija;
+       lo configurará después en Meta Developers)
+   - Ver Apéndice A más abajo para mandarle al cliente las instrucciones.
+
+5. **Cargar credenciales en el control plane**
+   - `/admin/tenants/{id}/config?tab=credentials`
+   - Pegar cada cred en su fila. Se cifran con Fernet antes de guardar.
+   - Si plan ≥ pro: agregar `google_client_id` y `google_client_secret`
+     (los compartidos del proyecto Korelabs en GCP, NO del cliente).
+
+6. **Cliente configura webhook en Meta**
+   - El cliente va a developers.facebook.com → su app → WhatsApp → Configuration
+   - Callback URL: `https://bot.korelabs.app/webhook` (la URL única del bot
+     multi-tenant)
+   - Verify token: el mismo string que cargaste en el paso 5
    - Suscribir a: `messages`
 
-5. **Verificar bot responde**
-   - Manda WhatsApp al número del cliente desde tu celular
-   - Verifica que aparece en el dashboard del cliente y que el bot responde
+7. **Smoke test**
+   - Mandar WhatsApp al número del cliente desde otro celular
+   - Verificar en logs de Railway que el bot resuelve al tenant correcto
+   - Verificar que aparece en `/conversations/{tenant-slug}/{wa_id}` del bot
 
-6. **Crear usuario del cliente en el dashboard**
-   - En `/admin/tenants/{id}/users`, crear:
-     - Email del owner del consultorio
-     - Password temporal (random, mandarlo por canal seguro)
-     - Role: `client`
-   - El cliente cambia su password al primer login
+8. **Generar magic link de setup para el cliente**
+   - En `/admin/tenants/{id}` → al lado del user → botón "Magic link →"
+   - Se abre página con la URL copiable (válida 7 días)
+   - Copiar el link
 
-7. **Mandar credenciales al cliente**
+9. **Mandar magic link al cliente**
    - Plantilla (WhatsApp):
      ```
-     Hola {nombre}, ya tienes tu Korelabs listo.
+     Hola {nombre}, tu plataforma Korelabs ya está activa. 🎉
 
-     1. Entra a https://dashboard.korelabs.app/login
-     2. Usuario: {email}
-     3. Contraseña temporal: {password}
-     4. Cambia tu contraseña al entrar
+     Para fijar tu contraseña y personalizar tu dashboard, abre este link:
+     {magic_link}
 
-     Para terminar la configuración, necesito que entres a
-     /configuracion/integraciones y conectes tu Google Calendar
-     (toma 30 segundos). Te paso instrucciones en video.
+     Te tomará 2 minutos. Una vez que termines, quedarás logueado
+     automáticamente.
 
      Cualquier duda, aquí estoy.
      ```
 
-### Pasos (modo v2 — self-service, futuro)
+10. **Cliente abre el link**
+    - Fija su password
+    - (Opcional) Sube logo, elige color principal, escribe welcome message
+    - Click "Terminar y entrar al dashboard" → queda logueado en `/app/inicio`
 
-Pendiente de Fase 4 de migración. La idea:
+### Pasos (v2 — self-service, futuro)
 
-1. Gustavo crea tenant con 1 form (paso 2 arriba).
-2. Sistema genera link mágico `/setup/{token}` con expiración 7 días.
+Requiere obtener **verificación de Meta como Tech Provider** (ver
+[memory:korelabs_meta_verification](../../.claude/projects/-Users-Compupod-Documents-Korelabs-LLamadas/memory/korelabs_meta_verification.md)).
+Cuando esté disponible:
+
+1. Gustavo crea tenant en 1 form.
+2. Sistema genera magic link.
 3. Cliente abre el link y completa:
-   - Logo upload
-   - Color primario
-   - OAuth Google (1 click)
-   - Pega su WhatsApp token (con instrucciones visuales paso a paso)
-   - Cambia su password
-4. Sistema marca al cliente como "onboarded" y le da acceso al dashboard.
+   - **WhatsApp Embedded Signup** (1 click, sin tokens manuales)
+   - Logo + colores
+   - Password
+4. Total: 10 min cliente, 5 min Gustavo.
 
-Tiempo total esperado: 15 min (5 Gustavo + 10 cliente).
+Hasta entonces, mantener el flujo manual de arriba.
 
 ---
 
