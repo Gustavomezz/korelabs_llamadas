@@ -226,17 +226,32 @@ class AudioBridge:
                             settings.barge_in_guard_ms, elapsed, self.call_id,
                         )
                     else:
-                        # Barge-in real. Hay que hacer DOS cosas:
-                        # 1. Decirle a OpenAI que trunque la respuesta en
-                        #    el punto donde estamos (sin esto el modelo
-                        #    sigue generando audio aunque ya nadie lo oiga).
-                        # 2. Limpiar el buffer de Twilio para que deje de
-                        #    reproducir el audio que ya estaba en vuelo.
+                        # Barge-in real. CUATRO acciones para que sea
+                        # fulminante (frene-en-seco):
+                        # 1. response.cancel: mata la generación server-side
+                        #    inmediatamente. Sin esto, el modelo sigue
+                        #    generando tokens detrás de bambalinas y puede
+                        #    seguir mandando audio hasta que llegue el
+                        #    response.done natural.
+                        # 2. conversation.item.truncate: marca el punto exacto
+                        #    donde se cortó para que el contexto refleje lo
+                        #    que el caller realmente alcanzó a oír (sin esto
+                        #    el bot cree que dijo más de lo que el usuario
+                        #    escuchó).
+                        # 3. twilio clear: vacía el buffer de playback de
+                        #    Twilio para que el audio en vuelo deje de oírse.
+                        # 4. Marcar _response_active=False y reset del timer
+                        #    inmediatamente para que un segundo intento de
+                        #    interrupción NO se ignore mientras llega el
+                        #    response.done del server (50-100ms de delay).
                         elapsed_ms = (
                             int((time.monotonic() - self._response_audio_started_at) * 1000)
                             if self._response_audio_started_at
                             else 0
                         )
+                        # 1. Cancel (lo más importante para frenar el modelo)
+                        await self.openai.send({"type": "response.cancel"})
+                        # 2. Truncate (deja el contexto consistente)
                         if self._last_assistant_item_id:
                             await self.openai.send({
                                 "type": "conversation.item.truncate",
@@ -244,16 +259,15 @@ class AudioBridge:
                                 "content_index": 0,
                                 "audio_end_ms": elapsed_ms,
                             })
-                            logger.info(
-                                "barge-in: truncate item=%s at %d ms call_id=%s",
-                                self._last_assistant_item_id, elapsed_ms, self.call_id,
-                            )
-                        else:
-                            logger.info(
-                                "barge-in: no item_id yet, only clearing twilio call_id=%s",
-                                self.call_id,
-                            )
+                        # 3. Vaciar buffer de Twilio
                         await self._send_twilio(twilio_clear_event(self.stream_sid))
+                        # 4. Resetear flags localmente (no esperar response.done)
+                        self._response_active = False
+                        self._response_audio_started_at = None
+                        logger.info(
+                            "barge-in HARD: cancel+truncate+clear at %d ms item=%s call_id=%s",
+                            elapsed_ms, self._last_assistant_item_id or "<none>", self.call_id,
+                        )
                 elif kind in ASSISTANT_TRANSCRIPT_DELTA_EVENTS:
                     rid = event.get("response_id") or ""
                     delta = event.get("delta") or ""
