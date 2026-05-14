@@ -227,10 +227,7 @@ async def media_stream(ws: WebSocket):
         # con flujo normal (no bloqueamos la llamada).
         wa_context: WhatsAppContext | None = None
         try:
-            # Limit reducido de 15 → 5: con Grok Think Fast cada char extra
-            # del prompt cuesta latencia. 5 mensajes recientes son suficientes
-            # para que el bot sepa de qué venían hablando sin inflar el prompt.
-            wa_context = await get_recent_whatsapp_context(pool, wa_id, limit=5)
+            wa_context = await get_recent_whatsapp_context(pool, wa_id, limit=15)
         except Exception:
             logger.exception("WA context lookup failed wa_id=%s (continuing without)", wa_id)
 

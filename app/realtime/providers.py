@@ -79,22 +79,31 @@ def build_session_update_grok(
     """
     Envelope para Grok Voice Think Fast 1.0.
 
-    Grok forkea el protocolo de OpenAI Realtime así que casi todos los
-    parámetros funcionan igual:
-    - `turn_detection` con threshold/silence_duration_ms/prefix_padding_ms
-      (mismos rangos que OpenAI: el default conservador del servicio causaba
-      delay grande; con los mismos params agresivos que usamos en OpenAI
-      mini, Grok debería bajar similar).
-    - `max_response_output_tokens` no está documentado oficialmente pero como
-      Grok forkea OpenAI lo enviamos optimistamente — si no lo soporta
-      simplemente lo ignora (testeamos contra el API).
+    Schema exacto según docs oficiales xAI (verificado en
+    https://docs.x.ai/developers/model-capabilities/audio/voice-agent):
 
-    NO soportado en Grok (vs OpenAI):
-    - `reasoning.effort` (Grok dice que razona en background sin trade-off)
+      session: {
+        instructions: string,
+        voice: eve|ara|rex|sal|leo,
+        tools: [...],
+        turn_detection: {
+          type: "server_vad"|null,
+          threshold: 0.1–0.9 (default 0.85),
+          silence_duration_ms: 0–10000,
+          prefix_padding_ms: 0–10000 (default 333)
+        },
+        audio: { input/output: { format: { type, rate } } }
+      }
+
+    NO soportado en Grok (lo OMITIMOS — antes lo mandábamos y Grok
+    silenciosamente rechazaba el session.update completo, cayendo a sus
+    defaults conservadores y aumentando la latencia):
+    - `create_response`, `interrupt_response` (OpenAI-isms en turn_detection)
+    - `max_response_output_tokens`
+    - `reasoning.effort`
     - `prompt_id` server-stored
-    - `transcription` para capturar lo que dice el user (puede no haber
-      transcripts del usuario en BD — verificar tras primera llamada).
-    - `output_modalities` y `session.type` (envelope sin esos campos).
+    - `transcription`
+    - `output_modalities` y `session.type`
     """
     session: dict[str, Any] = {
         "voice": voice,
@@ -104,8 +113,6 @@ def build_session_update_grok(
             "threshold": vad_threshold,
             "prefix_padding_ms": vad_prefix_ms,
             "silence_duration_ms": vad_silence_ms,
-            "create_response": True,
-            "interrupt_response": True,
         },
         "audio": {
             "input": {"format": {"type": "audio/pcmu", "rate": 8000}},
@@ -114,8 +121,8 @@ def build_session_update_grok(
     }
     if tools:
         session["tools"] = list(tools)
-    if max_output_tokens:
-        session["max_response_output_tokens"] = max_output_tokens
+    # max_output_tokens ignorado en Grok — no está en su schema documentado.
+    # Para limitar largo, controlar desde el system prompt directamente.
     return {"type": "session.update", "session": session}
 
 
