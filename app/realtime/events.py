@@ -76,7 +76,8 @@ def session_update(
 ) -> dict:
     """
     Construye `session.update` para Realtime. Audio g711 µ-law end-to-end
-    (lo que manda Twilio), VAD, transcripción del usuario con whisper-1.
+    (lo que manda Twilio), VAD, transcripción del usuario con
+    gpt-realtime-whisper forzado a español.
     """
     if is_v2_model(model):
         audio_input: dict[str, Any] = {
@@ -84,7 +85,15 @@ def session_update(
             "turn_detection": _build_turn_detection_v2(
                 vad_type, vad_eagerness, vad_threshold, vad_prefix_ms, vad_silence_ms,
             ),
-            "transcription": {"model": "whisper-1"},
+            # gpt-realtime-whisper: modelo nativamente streaming, hecho para
+            # voice agents. whisper-1 (legacy) alucinaba frases tipo "You" o
+            # "I look forward to working with you" en silencios/ruido.
+            # language="es": fuerza español, evita que el modelo "rellene"
+            # silencios con frases comunes en inglés de su training data.
+            "transcription": {
+                "model": "gpt-realtime-whisper",
+                "language": "es",
+            },
         }
         if noise_reduction:
             # 'near_field' está pensado para mic cercano (auriculares, teléfono).
@@ -135,7 +144,9 @@ def session_update(
         "voice": voice,
         "input_audio_format": "g711_ulaw",
         "output_audio_format": "g711_ulaw",
-        "input_audio_transcription": {"model": "whisper-1"},
+        # whisper-1 alucinaba; mantenido aquí en path v1 legacy por compat,
+        # pero idealmente NO usamos modelos v1 ya.
+        "input_audio_transcription": {"model": "whisper-1", "language": "es"},
         "turn_detection": {
             "type": "server_vad",
             "threshold": vad_threshold,
