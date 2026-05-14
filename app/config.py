@@ -93,12 +93,13 @@ class Settings(BaseSettings):
     # mini y 1.5 lo ignoran (usan instructions inline siempre).
     openai_prompt_id: str = ""
 
-    # CRÍTICO: límite duro para prevenir que el modelo encadene varios
-    # output items dentro de una response. Con 400 el modelo puede generar
-    # ~5 sentences seguidas (Paso 4a + 4b + roleplay del user + repetir
-    # correo + etc). Con 80 físicamente le alcanza para UNA pregunta
-    # corta y se corta. Forzar one-sentence-per-turn por límite duro.
-    openai_max_output_tokens: int = 80
+    # IMPORTANTE: en Realtime API este límite cuenta tokens TOTALES de la
+    # response, incluyendo audio. ~50 tokens audio por segundo de voz.
+    # 80 tokens = ~1.5s = audio truncado, suena a ruido blanco/cortado.
+    # 500 = ~10s de voz = espacio cómodo para UNA frase + 1 frase corta
+    # extra de margen. Para evitar multi-output-items dependemos de
+    # reasoning_effort=minimal, NO de este límite.
+    openai_max_output_tokens: int = 500
 
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
