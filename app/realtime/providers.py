@@ -10,7 +10,7 @@ transparentemente.
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-from app.config import settings
+from app.config import logger, settings
 
 
 @dataclass(frozen=True)
@@ -23,8 +23,15 @@ class ProviderSpec:
 
 
 def get_provider() -> ProviderSpec:
-    """Devuelve la spec del provider activo según settings.voice_provider."""
-    if settings.voice_provider == "grok":
+    """Devuelve la spec del provider activo según settings.voice_provider.
+
+    Normaliza el valor (strip + lower) para tolerar 'Grok', ' grok ', 'GROK', etc.
+    Loggea explícitamente cuál se resolvió para hacer debuggable cualquier
+    mismatch entre el env var de Railway y lo que efectivamente usa el bot.
+    """
+    raw = (settings.voice_provider or "").strip().lower()
+    logger.info("provider resolver: raw='%s' normalized='%s'", settings.voice_provider, raw)
+    if raw == "grok":
         if not settings.xai_api_key:
             raise RuntimeError("XAI_API_KEY no configurada (voice_provider=grok)")
         return ProviderSpec(
@@ -32,6 +39,11 @@ def get_provider() -> ProviderSpec:
             ws_url=f"wss://api.x.ai/v1/realtime?model={settings.xai_realtime_model}",
             api_key=settings.xai_api_key,
             extra_headers={},
+        )
+    if raw and raw != "openai":
+        logger.warning(
+            "voice_provider='%s' no reconocido — cayendo a openai (valores válidos: grok | openai)",
+            settings.voice_provider,
         )
     # default: openai
     if not settings.openai_api_key:

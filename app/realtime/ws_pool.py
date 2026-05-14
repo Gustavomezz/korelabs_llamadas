@@ -111,7 +111,8 @@ class RealtimeWSPool:
 
 
 def _provider_ready() -> bool:
-    if settings.voice_provider == "grok":
+    raw = (settings.voice_provider or "").strip().lower()
+    if raw == "grok":
         return bool(settings.xai_api_key)
     return bool(settings.openai_api_key)
 
