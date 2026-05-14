@@ -116,39 +116,43 @@ def _build_wa_context_block(ctx: WhatsAppContext) -> str:
         "DIRECCIÓN DE LA LLAMADA: es INBOUND — el usuario te llamó a ti. "
         "NO digas 'te marco', 'te llamo', 'te contacto' o similares — "
         "implicarían que tú iniciaste, lo cual es falso.\n\n"
-        "REGLAS DE SEGUIMIENTO:\n"
-        "1. Saluda usando el primer nombre del usuario.\n"
+        "REGLAS DE SEGUIMIENTO (LEER CON CUIDADO):\n"
+        "1. PRIMER TURNO: solo saluda usando el primer nombre del usuario "
+        "y haz UNA pregunta abierta corta tipo '¿en qué te puedo ayudar?'. "
+        "DESPUÉS te callas Y ESPERAS QUE EL USUARIO HABLE. NO sigas al "
+        "Paso 2 del system prompt. NO ofrezcas agendar todavía. NO "
+        "menciones la conversación previa. NO encadenas dos preguntas.\n"
         "2. NO repitas preguntas cuya respuesta ya está arriba (nombre, "
-        "negocio, correo, etc.) — esos datos YA los tienes.\n"
-        "3. Pregunta directo qué necesita ('¿en qué te puedo ayudar?'). "
-        "El usuario tendrá una razón concreta para haber marcado.\n"
-        "4. Cuando responda, mira el [CONTEXTO PREVIO POR WHATSAPP] arriba "
-        "para retomar con sentido: si estaba a punto de agendar, ofrécelo; "
-        "si tenía una cita ya agendada, podría querer confirmar o reagendar; "
-        "si la conversación quedó abierta sin avanzar, sigue el flujo del "
-        "system prompt desde donde corresponda."
+        "negocio, correo, etc.) — esos datos YA los tienes y NO los pides "
+        "de nuevo. Pero TENER los datos NO significa avanzar al siguiente "
+        "paso del flujo sin escuchar al usuario.\n"
+        "3. SOLO DESPUÉS de que el usuario haya hablado, evalúas el "
+        "[CONTEXTO PREVIO POR WHATSAPP] y decides cómo seguir: si estaba "
+        "a punto de agendar, ofrécelo; si tenía una cita ya agendada, "
+        "podría querer confirmar/reagendar; etc."
     )
     return "\n".join(parts)
 
 
 def _build_returning_user_greeting_hint(ctx: WhatsAppContext) -> str:
     """Greeting alternativo cuando el caller ya tiene historial WA.
-    Reemplaza el GREETING_HINT default — saludo breve usando el nombre +
-    pregunta abierta. NO asume 'te marco' (es inbound, el usuario llamó)
-    ni repite datos que ya tenemos."""
+
+    INSTRUCCIÓN CRÍTICA: el modelo SOLO debe decir esta frase y callar.
+    Sin esto el modelo encadena automáticamente el Paso 2 del system
+    prompt (ofrecer agendar) porque ya tiene el nombre del wa_context."""
     name = ctx.get("name") or None
     first_name = name.split()[0] if name else None
     nombre_part = f" {first_name}" if first_name else ""
     return (
-        f'Di textualmente y nada más: "¡Hola{nombre_part}! Habla Kora '
-        f'de Korelabs. ¿En qué te puedo ayudar?". '
-        "Eso es TODO tu primer turno — saludo corto + una pregunta abierta. "
-        "NO digas 'te marco', 'te llamo' ni similares (el usuario llamó a "
-        "TI, no al revés). NO preguntes con quién tienes el gusto (ya sabes "
-        "su nombre). NO te presentes con discurso largo sobre Korelabs. "
-        "NO menciones la conversación previa de WhatsApp todavía — el "
-        "usuario llamó por una razón concreta, deja que él te diga primero. "
-        "Después, retomas el contexto WhatsApp según corresponda."
+        f'Tu PRIMER turno completo es EXACTAMENTE esta frase, nada más: '
+        f'"¡Hola{nombre_part}! Habla Kora de Korelabs. ¿En qué te puedo '
+        f'ayudar?". '
+        "DESPUÉS de decir esa frase, te callas y ESPERAS que el usuario "
+        "hable. NO encadenes una segunda pregunta. NO ofrezcas agendar. "
+        "NO menciones WhatsApp. NO digas 'mucho gusto'. NO pases al Paso 2 "
+        "del flujo. AUNQUE tengas todos los datos del usuario en el "
+        "contexto previo, NO avanzas — esperas que él diga por qué llamó. "
+        "Solo después de que el usuario hable, decides cómo continuar."
     )
 
 
