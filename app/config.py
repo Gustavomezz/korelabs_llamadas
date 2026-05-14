@@ -12,20 +12,19 @@ logger = logging.getLogger("korelabs.llamadas")
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # Proveedor de voz: 'grok' (grok-voice-think-fast-1.0) o 'openai' (gpt-realtime-2).
-    # Cambia el endpoint, el envelope del session.update y los nombres de
-    # algunos eventos. El bridge maneja ambos transparentemente.
-    # Default = grok por costo (~10x más barato que OpenAI Realtime).
-    # Para fallback a OpenAI: setear VOICE_PROVIDER=openai en env vars.
-    voice_provider: str = "grok"
+    # Proveedor de voz: 'openai' (default) o 'grok' (NO RECOMENDADO).
+    # Grok Voice Think Fast probado en mayo 2026: latencia alta,
+    # conversation.item.truncate no soportado (barge-in roto), VAD se
+    # confunde con eco. Default OpenAI Realtime hasta que xAI mejore.
+    voice_provider: str = "openai"
 
     openai_api_key: str = ""
-    # gpt-realtime-2: modelo más capaz de OpenAI (GPT-5-class reasoning).
-    # ~110 ms más lento que gpt-realtime-mini en cold start pero MUCHO mejor
-    # razonamiento e instruction-following. Compensamos con todas las
-    # optimizaciones de abajo (pool pre-warm, server_vad agresivo,
-    # max_output_tokens, prompt server-stored, preambles).
-    openai_realtime_model: str = "gpt-realtime-2"
+    # gpt-realtime-mini: variante "Very fast" y cost-efficient (~$0.60/$2.40
+    # por 1M tokens in/out). Usa el mismo envelope v2 que gpt-realtime-2.
+    # Trade-off vs gpt-realtime-2: menos capacidad en razonamiento complejo,
+    # pero suficiente para calificación, lookup y agendamiento. Mucho menos
+    # costoso y más rápido en cold start.
+    openai_realtime_model: str = "gpt-realtime-mini"
 
     # Grok / xAI. Solo se usan si voice_provider='grok'.
     xai_api_key: str = ""
@@ -75,12 +74,11 @@ class Settings(BaseSettings):
     # conversación se vuelve loca. 800ms es punto seguro para teléfono en
     # altavoz; subir si todavía hay eco fantasma post-habla.
     post_speech_guard_ms: int = 800
-    # HALF-DUPLEX MODE: cuando True, mientras el bot está hablando NO se
-    # forwardea el audio del caller al server. Garantiza cero eco a costa
-    # de cero interrupciones — el caller no puede cortar al bot. Recomendado
-    # cuando los clientes usan altavoz (el threshold de VAD no puede separar
-    # eco de voz real en ese setup acústico). Pareado con max_output_tokens
-    # bajo para que las respuestas sean cortas, no se siente tan rígido.
+    # HALF-DUPLEX MODE: workaround creado para Grok cuando VAD no separaba
+    # eco de voz real. Con OpenAI Realtime el VAD nativo + barge-in con
+    # response.cancel + truncate funciona bien, así que NO se necesita
+    # activarlo. Disponible como fallback si en algún cliente con speaker
+    # malo sigue habiendo eco — pero no debería ser necesario.
     half_duplex_mode: bool = False
     # Pool de WebSockets pre-conectadas a OpenAI. Cada conexión idle ahorra
     # ~500 ms de TCP+TLS+upgrade en cold start. 0 deshabilita el pool.

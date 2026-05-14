@@ -19,8 +19,20 @@ from typing import Any, Iterable
 
 
 def is_v2_model(model: str) -> bool:
+    """Modelos que usan el envelope nuevo de Realtime (session.type='realtime',
+    audio.input.turn_detection nested, audio.output.voice nested).
+
+    Incluye:
+      - gpt-realtime-mini (cost-efficient, "very fast", default actual)
+      - gpt-realtime-2 / gpt-realtime-3 (flagships)
+      - cualquier snapshot fechado (ej. gpt-realtime-mini-2025-12-15)
+    """
     name = (model or "").lower()
-    return name.startswith("gpt-realtime-2") or name.startswith("gpt-realtime-3")
+    return (
+        name.startswith("gpt-realtime-mini")
+        or name.startswith("gpt-realtime-2")
+        or name.startswith("gpt-realtime-3")
+    )
 
 
 def _build_turn_detection_v2(vad_type: str, eagerness: str, threshold: float, prefix_ms: int, silence_ms: int) -> dict:
@@ -101,7 +113,12 @@ def session_update(
             session["prompt"] = prompt_obj
         else:
             session["instructions"] = instructions
-        if reasoning_effort:
+        # reasoning.effort solo aplica a modelos GPT-5-class (gpt-realtime-2,
+        # gpt-realtime-3). gpt-realtime-mini NO es un reasoning model
+        # — la docs oficial no menciona reasoning.effort para mini. Si lo
+        # mandamos, puede que sea ignorado o devuelva error.
+        is_mini = (model or "").lower().startswith("gpt-realtime-mini")
+        if reasoning_effort and not is_mini:
             # minimal | low | medium | high | xhigh. minimal recomendado para
             # voz de baja latencia con tareas simples (calificación, lookup).
             session["reasoning"] = {"effort": reasoning_effort}
