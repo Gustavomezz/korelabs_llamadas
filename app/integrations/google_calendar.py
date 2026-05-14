@@ -273,11 +273,18 @@ async def book_meeting(
     *,
     start_iso: str,
     end_iso: str,
-    attendee_email: str,
     attendee_name: str,
+    attendee_email: str = "",
     clinic_name: str = "",
     wa_id: str = "",
+    delivery_phone: str = "",
 ) -> dict:
+    """Crea evento en Google Calendar.
+
+    attendee_email es OPCIONAL — si está vacío, el evento se crea sin
+    attendees (solo lo ve el owner del calendar). El Meet link se manda
+    por WhatsApp a `delivery_phone` (o wa_id si no se especificó).
+    """
     valid, error = _validate_future_iso(start_iso)
     if not valid:
         logger.error("rejected book_meeting bad start_iso=%s: %s", start_iso, error)
@@ -287,20 +294,25 @@ async def book_meeting(
     if clinic_name:
         summary += f" ({clinic_name})"
 
+    contact_line = f"Contacto: {attendee_email}\n" if attendee_email else ""
+    delivery_line = ""
+    if delivery_phone and delivery_phone != wa_id:
+        delivery_line = f"WA delivery: +{delivery_phone}\n"
+
     description = (
         f"Llamada de descubrimiento Korelabs con {attendee_name}.\n\n"
-        f"Contacto: {attendee_email}\n"
+        f"{contact_line}"
         f"Tel: +{wa_id}\n"
+        f"{delivery_line}"
         + (f"Negocio: {clinic_name}\n" if clinic_name else "")
         + "\nAgendado automáticamente por Kora (asistente AI de Korelabs)."
     )
 
-    event = {
+    event: dict = {
         "summary": summary,
         "description": description,
         "start": {"dateTime": start_iso, "timeZone": settings.calendar_timezone},
         "end": {"dateTime": end_iso, "timeZone": settings.calendar_timezone},
-        "attendees": [{"email": attendee_email}],
         "conferenceData": {
             "createRequest": {
                 "requestId": f"korelabs-call-{wa_id}-{int(datetime.now().timestamp())}",
@@ -315,6 +327,12 @@ async def book_meeting(
             ],
         },
     }
+    # Solo añadimos attendees si el usuario realmente dio un correo —
+    # sin attendees, Google no manda invite por email (el evento solo
+    # existe en el calendar del owner). Eso está bien porque el Meet
+    # link se entrega por WhatsApp.
+    if attendee_email:
+        event["attendees"] = [{"email": attendee_email}]
 
     result = await google_calendar_request(
         pool, "POST", "/calendars/primary/events",
@@ -341,31 +359,38 @@ async def book_meeting(
         details=f"{attendee_name} - {clinic_name}".strip(" -"),
     )
 
-    # Enviar Meet link por WhatsApp si está configurado. Esto NO bloquea el
-    # booking — Google Calendar ya mandó el invite por correo de cualquier
-    # forma. Errores se loguean y siguen.
+    # Enviar Meet link por WhatsApp. Es el canal PRINCIPAL de entrega cuando
+    # no se dio correo. Si dieron correo, el WhatsApp es adicional al email.
+    # Si el usuario pidió otro número (delivery_phone), va ahí.
     whatsapp_sent = False
-    if meet_link and wa_id and whatsapp_is_configured():
+    target_wa = delivery_phone or wa_id
+    if meet_link and target_wa and whatsapp_is_configured():
         first_name = (attendee_name or "").split(" ")[0] or "hola"
+        email_line = (
+            "También te llega la invitación a tu correo.\n"
+            if attendee_email else ""
+        )
         wa_text = (
             f"¡Listo, {first_name}! 🎉\n\n"
-            f"Tu llamada con Gustavo de Korelabs está agendada.\n\n"
+            f"Tu llamada con el equipo de Korelabs está agendada.\n\n"
             f"📅 Únete por Google Meet:\n{meet_link}\n\n"
-            f"También te llega la invitación a tu correo.\n"
+            f"{email_line}"
             f"¡Nos vemos pronto!"
         )
-        wa_response = await send_whatsapp_message(wa_id, wa_text)
+        wa_response = await send_whatsapp_message(target_wa, wa_text)
         if wa_response:
             whatsapp_sent = True
             wa_message_id = extract_wa_message_id(wa_response)
             try:
+                # Si delivery_phone != wa_id, guardamos en el contacto del
+                # número destino — así aparece en su inbox WA.
                 await save_outgoing_wa_message(
-                    pool, wa_id=wa_id, content=wa_text, wa_message_id=wa_message_id,
+                    pool, wa_id=target_wa, content=wa_text, wa_message_id=wa_message_id,
                 )
             except Exception:
                 logger.exception(
                     "could not persist WA message to conversations table wa_id=%s",
-                    wa_id,
+                    target_wa,
                 )
 
     return {
