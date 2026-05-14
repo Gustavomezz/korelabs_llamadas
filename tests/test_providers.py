@@ -27,7 +27,7 @@ def test_grok_session_update_envelope_with_aggressive_vad():
     assert td["threshold"] == 0.5
     assert td["silence_duration_ms"] == 300
     assert td["prefix_padding_ms"] == 200
-    assert td["interrupt_response"] is True
+    assert "interrupt_response" not in td
     # Audio anidado, mismo formato que OpenAI para Twilio
     assert s["audio"]["input"]["format"] == {"type": "audio/pcmu", "rate": 8000}
     assert s["audio"]["output"]["format"] == {"type": "audio/pcmu", "rate": 8000}
@@ -38,13 +38,13 @@ def test_grok_session_update_envelope_with_aggressive_vad():
     assert "tool_choice" not in s  # opcional, no lo mandamos por default
 
 
-def test_grok_session_update_with_max_tokens():
-    """max_response_output_tokens no está documentado en Grok pero forkea
-    OpenAI: lo enviamos optimistamente para acortar respuestas."""
+def test_grok_session_update_omits_unsupported_max_tokens():
+    """Grok no documenta max tokens en session.update; no mandamos campos extra."""
     evt = build_session_update_grok(
         instructions="x", voice="ara", tools=None, max_output_tokens=300,
     )
-    assert evt["session"]["max_response_output_tokens"] == 300
+    assert "max_response_output_tokens" not in evt["session"]
+    assert "max_output_tokens" not in evt["session"]
 
 
 def test_grok_session_update_can_tune_vad():

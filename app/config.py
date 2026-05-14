@@ -70,19 +70,21 @@ class Settings(BaseSettings):
     # speech del caller. 500ms es un punto seguro empíricamente con
     # threshold 0.7.
     barge_in_guard_ms: int = 500
+    # Si False, OpenAI no autocancela respuestas cuando el VAD detecta speech.
+    # El bridge decide manualmente si fue interrupción real o eco. Esto evita
+    # que un falso speech_started del propio audio de Kora corte la respuesta.
+    realtime_interrupt_response: bool = False
     # ms a ignorar la VAD DESPUÉS de que el bot terminó de hablar. El audio
     # del bot por speaker genera reverb que llega 200-800ms después del fin
     # del response.done. Sin esto, el server VAD escucha el reverb, lo
     # transcribe como "user speech", el bot responde a su propio eco y la
-    # conversación se vuelve loca. 1500ms para teléfono en altavoz con
+    # conversación se vuelve loca. 2000ms para teléfono en altavoz con
     # transcriber prone a alucinaciones cortas tipo "Gustavo" o "Claro".
-    post_speech_guard_ms: int = 1500
-    # HALF-DUPLEX MODE: workaround creado para Grok cuando VAD no separaba
-    # eco de voz real. Con OpenAI Realtime el VAD nativo + barge-in con
-    # response.cancel + truncate funciona bien, así que NO se necesita
-    # activarlo. Disponible como fallback si en algún cliente con speaker
-    # malo sigue habiendo eco — pero no debería ser necesario.
-    half_duplex_mode: bool = False
+    post_speech_guard_ms: int = 2000
+    # HALF-DUPLEX MODE: no manda audio entrante a OpenAI mientras Kora habla.
+    # Es el modo más robusto para llamadas telefónicas con altavoz/eco. Si un
+    # cliente necesita interrupciones naturales, puede desactivarse por env.
+    half_duplex_mode: bool = True
     # Pool de WebSockets pre-conectadas a OpenAI. Cada conexión idle ahorra
     # ~500 ms de TCP+TLS+upgrade en cold start. 0 deshabilita el pool.
     realtime_ws_pool_size: int = 2
@@ -100,6 +102,9 @@ class Settings(BaseSettings):
     # extra de margen. Para evitar multi-output-items dependemos de
     # reasoning_effort=minimal, NO de este límite.
     openai_max_output_tokens: int = 500
+    # Modelo de transcripción usado para transcripts del input del usuario.
+    # El modelo realtime consume audio directamente; esto es guía/auditoría.
+    openai_transcription_model: str = "gpt-4o-mini-transcribe"
 
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""

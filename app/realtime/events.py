@@ -35,7 +35,14 @@ def is_v2_model(model: str) -> bool:
     )
 
 
-def _build_turn_detection_v2(vad_type: str, eagerness: str, threshold: float, prefix_ms: int, silence_ms: int) -> dict:
+def _build_turn_detection_v2(
+    vad_type: str,
+    eagerness: str,
+    threshold: float,
+    prefix_ms: int,
+    silence_ms: int,
+    interrupt_response: bool,
+) -> dict:
     """semantic_vad: usa modelo de NLU para decidir fin de turno (mejor para
     teléfono, evita barge-in falso). server_vad: VAD basada en energía,
     más rápida pero más ruidosa."""
@@ -44,7 +51,7 @@ def _build_turn_detection_v2(vad_type: str, eagerness: str, threshold: float, pr
             "type": "semantic_vad",
             "eagerness": eagerness,
             "create_response": True,
-            "interrupt_response": True,
+            "interrupt_response": interrupt_response,
         }
     return {
         "type": "server_vad",
@@ -52,7 +59,7 @@ def _build_turn_detection_v2(vad_type: str, eagerness: str, threshold: float, pr
         "prefix_padding_ms": prefix_ms,
         "silence_duration_ms": silence_ms,
         "create_response": True,
-        "interrupt_response": True,
+        "interrupt_response": interrupt_response,
     }
 
 
@@ -73,25 +80,28 @@ def session_update(
     prompt_id: str | None = None,
     prompt_version: str | None = None,
     max_output_tokens: int | None = None,
+    transcription_model: str = "gpt-4o-mini-transcribe",
+    interrupt_response: bool = False,
 ) -> dict:
     """
     Construye `session.update` para Realtime. Audio g711 µ-law end-to-end
-    (lo que manda Twilio), VAD, transcripción del usuario con
-    gpt-realtime-whisper forzado a español.
+    (lo que manda Twilio), VAD y transcripción del usuario forzada a español.
     """
     if is_v2_model(model):
         audio_input: dict[str, Any] = {
             "format": {"type": "audio/pcmu"},
             "turn_detection": _build_turn_detection_v2(
-                vad_type, vad_eagerness, vad_threshold, vad_prefix_ms, vad_silence_ms,
+                vad_type,
+                vad_eagerness,
+                vad_threshold,
+                vad_prefix_ms,
+                vad_silence_ms,
+                interrupt_response,
             ),
-            # gpt-realtime-whisper: modelo nativamente streaming, hecho para
-            # voice agents. whisper-1 (legacy) alucinaba frases tipo "You" o
-            # "I look forward to working with you" en silencios/ruido.
-            # language="es": fuerza español, evita que el modelo "rellene"
-            # silencios con frases comunes en inglés de su training data.
+            # language="es" evita que el transcriber rellene silencios con
+            # frases comunes en inglés de su training data.
             "transcription": {
-                "model": "gpt-realtime-whisper",
+                "model": transcription_model,
                 "language": "es",
             },
         }
@@ -113,15 +123,15 @@ def session_update(
             },
             "tool_choice": "auto",
         }
-        # Server-stored prompt es preferido si está disponible (más rápido,
-        # mejor cacheado en OpenAI). Sin él caemos a instructions inline.
+        # Mandamos siempre instructions inline porque ahí vive el prompt activo
+        # del tenant y el contexto dinámico de WhatsApp. Si hay prompt_id, se
+        # usa como plantilla/cache adicional, no como reemplazo del contexto.
+        session["instructions"] = instructions
         if prompt_id:
             prompt_obj: dict[str, Any] = {"id": prompt_id}
             if prompt_version:
                 prompt_obj["version"] = prompt_version
             session["prompt"] = prompt_obj
-        else:
-            session["instructions"] = instructions
         # reasoning.effort solo aplica a modelos GPT-5-class (gpt-realtime-2,
         # gpt-realtime-3). gpt-realtime-mini NO es un reasoning model
         # — la docs oficial no menciona reasoning.effort para mini. Si lo
@@ -134,15 +144,7 @@ def session_update(
         if tools:
             session["tools"] = list(tools)
         if max_output_tokens:
-            # BUG CRÍTICO ENCONTRADO 2026-05-14: el campo correcto en v2
-            # Realtime API es `max_response_output_tokens`, NO
-            # `max_output_tokens`. El nombre incorrecto era IGNORADO
-            # silenciosamente por OpenAI, por eso el bot generaba
-            # respuestas larguísimas (multi-sentence) sin respetar el
-            # límite. Esto causaba que el modelo roleplayeara turnos
-            # adicionales del user dentro de su propia response.
-            # Source: community.openai.com/t/session-update-max-tokens-incorrect
-            session["max_response_output_tokens"] = max_output_tokens
+            session["max_output_tokens"] = max_output_tokens
         return {"type": "session.update", "session": session}
 
     # Envelope v1 (legacy)

@@ -24,10 +24,13 @@ def test_is_v2_model_recognizes_v2_family():
 def test_is_v2_model_treats_legacy_as_v1():
     assert is_v2_model("gpt-realtime") is False
     assert is_v2_model("gpt-realtime-1.5") is False
-    assert is_v2_model("gpt-realtime-mini") is False
     assert is_v2_model("gpt-4o-realtime-preview") is False
     assert is_v2_model("gpt-4o-realtime-preview-2024-12-17") is False
     assert is_v2_model("") is False
+
+
+def test_is_v2_model_recognizes_realtime_mini():
+    assert is_v2_model("gpt-realtime-mini") is True
 
 
 # ---------- session_update v2 ----------
@@ -43,14 +46,17 @@ def test_session_update_v2_envelope_defaults():
     assert s["audio"]["input"]["format"] == {"type": "audio/pcmu"}
     assert s["audio"]["output"]["format"] == {"type": "audio/pcmu"}
     assert s["audio"]["output"]["voice"] == "marin"
-    assert s["audio"]["input"]["transcription"] == {"model": "whisper-1"}
+    assert s["audio"]["input"]["transcription"] == {
+        "model": "gpt-4o-mini-transcribe",
+        "language": "es",
+    }
     # Default ahora server_vad con threshold alto + silence corto (latencia mínima).
     td = s["audio"]["input"]["turn_detection"]
     assert td["type"] == "server_vad"
     assert td["threshold"] == 0.7  # default: anti-falsos-positivos; barge-in se resuelve con truncate
     assert td["silence_duration_ms"] == 300
     assert td["prefix_padding_ms"] == 200
-    assert td["interrupt_response"] is True
+    assert td["interrupt_response"] is False
     # noise_reduction near_field por defecto (anti-eco línea telefónica)
     assert s["audio"]["input"]["noise_reduction"] == {"type": "near_field"}
     # Default reasoning_effort 'minimal' (latencia mínima)
@@ -94,17 +100,16 @@ def test_session_update_v2_can_change_reasoning_effort():
     assert evt["session"]["reasoning"]["effort"] == "medium"
 
 
-def test_session_update_v2_uses_prompt_id_when_set():
-    """Si pasamos prompt_id, debe usarse en lugar de instructions inline.
-    Reduce payload del session.update y maximiza cache hit en OpenAI."""
+def test_session_update_v2_keeps_instructions_when_prompt_id_is_set():
+    """El prompt inline trae contexto dinámico; no debe perderse por prompt_id."""
     evt = session_update(
-        instructions="esto NO debería enviarse",
+        instructions="prompt del tenant + contexto WA",
         model="gpt-realtime-2",
         prompt_id="pmpt_abc123",
     )
     s = evt["session"]
     assert s["prompt"] == {"id": "pmpt_abc123"}
-    assert "instructions" not in s
+    assert s["instructions"] == "prompt del tenant + contexto WA"
 
 
 def test_session_update_v2_prompt_id_with_version():
@@ -135,6 +140,16 @@ def test_session_update_v2_with_tools():
     assert s["reasoning"]["effort"] == "medium"
 
 
+def test_session_update_v2_uses_documented_max_output_tokens_field():
+    evt = session_update(
+        instructions="x",
+        model="gpt-realtime-2",
+        max_output_tokens=500,
+    )
+    assert evt["session"]["max_output_tokens"] == 500
+    assert "max_response_output_tokens" not in evt["session"]
+
+
 # ---------- session_update v1 (legacy) ----------
 
 def test_session_update_v1_envelope():
@@ -146,7 +161,7 @@ def test_session_update_v1_envelope():
     assert s["voice"] == "marin"
     assert s["input_audio_format"] == "g711_ulaw"
     assert s["output_audio_format"] == "g711_ulaw"
-    assert s["input_audio_transcription"] == {"model": "whisper-1"}
+    assert s["input_audio_transcription"] == {"model": "whisper-1", "language": "es"}
     assert s["turn_detection"]["type"] == "server_vad"
     assert s["turn_detection"]["threshold"] == 0.7
     assert "audio" not in s

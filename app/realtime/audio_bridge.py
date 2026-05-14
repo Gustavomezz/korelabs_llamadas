@@ -30,6 +30,7 @@ from app.realtime.events import (
     append_audio,
     function_call_output,
     twilio_clear_event,
+    twilio_mark_event,
     twilio_media_event,
 )
 from app.realtime.openai_session import OpenAISession
@@ -80,7 +81,7 @@ class AudioBridge:
         # conversation.item.truncate al hacer barge-in (limpiar Twilio NO
         # detiene al modelo — el truncate sí). Reset en response.done.
         self._last_assistant_item_id: str | None = None
-        # Timestamp del último response.done. Usado para suprimir VAD
+        # Timestamp del último response.done/playback mark. Usado para suprimir VAD
         # speech_started que dispare en los `post_speech_guard_ms` siguientes
         # — eso es típicamente reverb del speaker, no usuario real.
         self._last_response_done_at: float | None = None
@@ -122,6 +123,11 @@ class AudioBridge:
                     payload = event["media"]["payload"]
                     await self.openai.send(append_audio(payload))
                     self._frames_in += 1
+                elif kind == "mark":
+                    name = ((event.get("mark") or {}).get("name") or "")
+                    if name.startswith("response_done:"):
+                        self._last_response_done_at = time.monotonic()
+                        logger.debug("twilio playback mark received name=%s call_id=%s", name, self.call_id)
                 elif kind == "stop":
                     logger.info("twilio sent stop call_id=%s", self.call_id)
                     return
@@ -219,6 +225,8 @@ class AudioBridge:
                             "openai usage call_id=%s in=%d cached=%d (%.0f%%) out=%d",
                             self.call_id, in_tok, cached, cache_pct, out_tok,
                         )
+                    if rid:
+                        await self._send_twilio(twilio_mark_event(self.stream_sid, f"response_done:{rid}"))
                     await self._flush_assistant_transcript(rid)
                 elif kind == "input_audio_buffer.speech_started":
                     # Caller empezó a hablar.
@@ -260,6 +268,8 @@ class AudioBridge:
                             "barge-in SUPPRESSED (within guard %dms): elapsed=%dms call_id=%s",
                             settings.barge_in_guard_ms, elapsed, self.call_id,
                         )
+                        await self.openai.send({"type": "input_audio_buffer.clear"})
+                        continue
                     else:
                         # Barge-in real. CUATRO acciones para que sea
                         # fulminante (frene-en-seco):

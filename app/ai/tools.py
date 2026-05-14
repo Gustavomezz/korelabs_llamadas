@@ -12,6 +12,7 @@ import asyncpg
 
 from app.config import logger
 from app.integrations.google_calendar import (
+    CalendarUnavailableError,
     book_meeting,
     cancel_meeting,
     get_available_slots,
@@ -220,6 +221,15 @@ async def execute_tool(name: str, args: dict, ctx: ToolContext) -> str:
         logger.warning("unknown tool: %s", name)
         return json.dumps({"error": f"Unknown tool: {name}"})
 
+    except CalendarUnavailableError as e:
+        logger.error("tool %s calendar unavailable: %s", name, e)
+        return json.dumps({
+            "error": "calendar_unavailable",
+            "message": (
+                "No pude confirmar disponibilidad en Google Calendar. "
+                "No inventes horarios; pide intentar de nuevo en un momento."
+            ),
+        })
     except KeyError as e:
         logger.error("tool %s missing required arg: %s", name, e)
         return json.dumps({"error": f"Missing required argument: {e}"})

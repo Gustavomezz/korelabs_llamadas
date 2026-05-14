@@ -152,6 +152,8 @@ def _build_session_payloads(
         vad_prefix_ms=settings.realtime_vad_prefix_ms,
         prompt_id=prompt_id,
         max_output_tokens=settings.openai_max_output_tokens,
+        transcription_model=settings.openai_transcription_model,
+        interrupt_response=settings.realtime_interrupt_response,
     )
     return update, build_greeting_events_openai(greeting_hint), chosen_voice
 
