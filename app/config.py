@@ -19,12 +19,13 @@ class Settings(BaseSettings):
     voice_provider: str = "openai"
 
     openai_api_key: str = ""
-    # gpt-realtime-mini: variante "Very fast" y cost-efficient (~$0.60/$2.40
-    # por 1M tokens in/out). Usa el mismo envelope v2 que gpt-realtime-2.
-    # Trade-off vs gpt-realtime-2: menos capacidad en razonamiento complejo,
-    # pero suficiente para calificación, lookup y agendamiento. Mucho menos
-    # costoso y más rápido en cold start.
-    openai_realtime_model: str = "gpt-realtime-mini"
+    # gpt-realtime-2: modelo flagship con razonamiento GPT-5-class. Más
+    # robusto contra transcripciones ambiguas (descarta inputs que no
+    # tienen sentido en lugar de procesarlos a ciegas). ~10x más caro que
+    # mini pero mejor para flows con stakes (calificación + agendamiento
+    # de citas reales con clientes pagantes).
+    # Para volver a mini: setear OPENAI_REALTIME_MODEL=gpt-realtime-mini.
+    openai_realtime_model: str = "gpt-realtime-2"
 
     # Grok / xAI. Solo se usan si voice_provider='grok'.
     xai_api_key: str = ""
@@ -71,9 +72,9 @@ class Settings(BaseSettings):
     # del bot por speaker genera reverb que llega 200-800ms después del fin
     # del response.done. Sin esto, el server VAD escucha el reverb, lo
     # transcribe como "user speech", el bot responde a su propio eco y la
-    # conversación se vuelve loca. 800ms es punto seguro para teléfono en
-    # altavoz; subir si todavía hay eco fantasma post-habla.
-    post_speech_guard_ms: int = 800
+    # conversación se vuelve loca. 1500ms para teléfono en altavoz con
+    # transcriber prone a alucinaciones cortas tipo "Gustavo" o "Claro".
+    post_speech_guard_ms: int = 1500
     # HALF-DUPLEX MODE: workaround creado para Grok cuando VAD no separaba
     # eco de voz real. Con OpenAI Realtime el VAD nativo + barge-in con
     # response.cancel + truncate funciona bien, así que NO se necesita
