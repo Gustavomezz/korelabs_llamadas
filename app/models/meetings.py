@@ -1,9 +1,28 @@
 """Persistencia de reuniones agendadas durante la llamada."""
 from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import asyncpg
 
-from app.config import logger
+from app.config import logger, settings
+
+
+def _calendar_local_naive(iso_str: str) -> datetime:
+    """Convierte un ISO aware a hora local del calendario sin tzinfo.
+
+    La tabla `meetings.start_time` del dashboard es `timestamp without time
+    zone`; el frontend la interpreta como hora local. Por eso debemos guardar
+    15:00 México como `2026-05-15 15:00`, no como `2026-05-15 21:00` UTC.
+    """
+    dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        return dt
+    try:
+        tz = ZoneInfo(settings.calendar_timezone)
+    except ZoneInfoNotFoundError:
+        logger.error("invalid CALENDAR_TIMEZONE=%s, storing UTC naive", settings.calendar_timezone)
+        return dt.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    return dt.astimezone(tz).replace(tzinfo=None)
 
 
 async def save_meeting(
@@ -24,8 +43,8 @@ async def save_meeting(
                 VALUES ($1, $2, $3, $4, $5, $6)
                 """,
                 wa_id, event_id, attendee_email,
-                datetime.fromisoformat(start_iso.replace("Z", "+00:00")).replace(tzinfo=None),
-                datetime.fromisoformat(end_iso.replace("Z", "+00:00")).replace(tzinfo=None),
+                _calendar_local_naive(start_iso),
+                _calendar_local_naive(end_iso),
                 meet_link,
             )
     except Exception:
