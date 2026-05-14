@@ -68,6 +68,13 @@ class Settings(BaseSettings):
     # speech del caller. 500ms es un punto seguro empíricamente con
     # threshold 0.7.
     barge_in_guard_ms: int = 500
+    # ms a ignorar la VAD DESPUÉS de que el bot terminó de hablar. El audio
+    # del bot por speaker genera reverb que llega 200-800ms después del fin
+    # del response.done. Sin esto, el server VAD escucha el reverb, lo
+    # transcribe como "user speech", el bot responde a su propio eco y la
+    # conversación se vuelve loca. 800ms es punto seguro para teléfono en
+    # altavoz; subir si todavía hay eco fantasma post-habla.
+    post_speech_guard_ms: int = 800
     # Pool de WebSockets pre-conectadas a OpenAI. Cada conexión idle ahorra
     # ~500 ms de TCP+TLS+upgrade en cold start. 0 deshabilita el pool.
     realtime_ws_pool_size: int = 2

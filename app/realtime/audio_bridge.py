@@ -80,6 +80,10 @@ class AudioBridge:
         # conversation.item.truncate al hacer barge-in (limpiar Twilio NO
         # detiene al modelo — el truncate sí). Reset en response.done.
         self._last_assistant_item_id: str | None = None
+        # Timestamp del último response.done. Usado para suprimir VAD
+        # speech_started que dispare en los `post_speech_guard_ms` siguientes
+        # — eso es típicamente reverb del speaker, no usuario real.
+        self._last_response_done_at: float | None = None
 
     async def run(self) -> None:
         t1 = asyncio.create_task(self._pump_twilio_to_openai(), name="twilio->openai")
@@ -189,6 +193,10 @@ class AudioBridge:
                     self._response_active = False
                     self._response_audio_started_at = None
                     self._last_assistant_item_id = None
+                    # Marca para el post-speech guard: ignora speech_started
+                    # del server VAD durante los próximos `post_speech_guard_ms`
+                    # ms (es reverb del speaker, no caller real).
+                    self._last_response_done_at = time.monotonic()
                     resp = event.get("response") or {}
                     rid = resp.get("id")
                     # Loguea métricas de prompt caching para validar que el
@@ -212,6 +220,26 @@ class AudioBridge:
                     # enviado, para no confundir eco inmediato del bot con
                     # speech del caller.
                     if not self._response_active:
+                        # Post-speech guard: si la VAD disparó muy cerca del
+                        # último response.done, es reverb/eco del speaker.
+                        # Limpiar el buffer de audio del server para que NO
+                        # cree un mensaje fantasma de usuario.
+                        if (
+                            self._last_response_done_at is not None
+                            and (time.monotonic() - self._last_response_done_at) * 1000
+                                < settings.post_speech_guard_ms
+                        ):
+                            elapsed = int(
+                                (time.monotonic() - self._last_response_done_at) * 1000
+                            )
+                            logger.info(
+                                "vad: post-speech echo SUPPRESSED (within %dms guard): elapsed=%dms call_id=%s",
+                                settings.post_speech_guard_ms, elapsed, self.call_id,
+                            )
+                            # Pide al server descartar el audio bufferizado
+                            # para que no genere transcript fantasma.
+                            await self.openai.send({"type": "input_audio_buffer.clear"})
+                            continue
                         logger.info("vad: user speech_started (bot idle) call_id=%s", self.call_id)
                     elif (
                         self._response_audio_started_at is None
