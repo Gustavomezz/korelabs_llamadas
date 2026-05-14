@@ -75,6 +75,13 @@ class Settings(BaseSettings):
     # conversación se vuelve loca. 800ms es punto seguro para teléfono en
     # altavoz; subir si todavía hay eco fantasma post-habla.
     post_speech_guard_ms: int = 800
+    # HALF-DUPLEX MODE: cuando True, mientras el bot está hablando NO se
+    # forwardea el audio del caller al server. Garantiza cero eco a costa
+    # de cero interrupciones — el caller no puede cortar al bot. Recomendado
+    # cuando los clientes usan altavoz (el threshold de VAD no puede separar
+    # eco de voz real en ese setup acústico). Pareado con max_output_tokens
+    # bajo para que las respuestas sean cortas, no se siente tan rígido.
+    half_duplex_mode: bool = False
     # Pool de WebSockets pre-conectadas a OpenAI. Cada conexión idle ahorra
     # ~500 ms de TCP+TLS+upgrade en cold start. 0 deshabilita el pool.
     realtime_ws_pool_size: int = 2

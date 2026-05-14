@@ -112,6 +112,13 @@ class AudioBridge:
                 event = json.loads(raw)
                 kind = event.get("event")
                 if kind == "media":
+                    # HALF-DUPLEX: si está activo y el bot está hablando,
+                    # descartamos el frame en lugar de mandarlo al server.
+                    # Esto garantiza que la VAD del server nunca vea el eco
+                    # del propio bot rebotando por el altavoz.
+                    if settings.half_duplex_mode and self._response_active:
+                        self._frames_in += 1
+                        continue
                     payload = event["media"]["payload"]
                     await self.openai.send(append_audio(payload))
                     self._frames_in += 1
