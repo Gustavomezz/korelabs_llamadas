@@ -58,34 +58,23 @@ REALTIME_TOOLS: list[dict] = [
         "description": (
             "Crea una reunión en Google Calendar con link de Google Meet. "
             "Usa SOLO un horario obtenido de get_available_slots. "
-            "Por DEFAULT el Meet link se manda por WhatsApp al número del "
-            "caller (más conveniente que correo). Pasa `delivery_phone` "
-            "solo si el usuario pidió expresamente enviarlo a OTRO número. "
-            "`attendee_email` es OPCIONAL — solo úsalo si el usuario "
-            "explícitamente quiere también recibir invitación por correo. "
-            "El campo whatsapp_sent en la respuesta confirma envío."
+            "Google manda invitación al correo del attendee automáticamente. "
+            "Adicionalmente, si el caller ya tiene historial WhatsApp, el "
+            "Meet link también se envía por WA al número del caller — pero "
+            "esto NO funciona para callers sin WA previo (restricción de "
+            "Meta: no podemos iniciar conversaciones sin opt-in). El correo "
+            "es el canal de entrega CONFIABLE — siempre pídelo."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "start_iso": {"type": "string", "description": "ISO datetime del inicio"},
                 "end_iso": {"type": "string", "description": "ISO datetime del fin"},
+                "attendee_email": {"type": "string", "description": "Email del prospecto, requerido"},
                 "attendee_name": {"type": "string", "description": "Nombre del prospecto"},
                 "clinic_name": {"type": "string", "description": "Nombre del consultorio o negocio"},
-                "attendee_email": {
-                    "type": "string",
-                    "description": "OPCIONAL. Solo si el usuario pidió correo expresamente.",
-                },
-                "delivery_phone": {
-                    "type": "string",
-                    "description": (
-                        "OPCIONAL. Número alternativo (formato E.164 sin +, "
-                        "ej. 5215512345678) para enviar el Meet link. "
-                        "Si no se pasa, se envía al número del que llamó."
-                    ),
-                },
             },
-            "required": ["start_iso", "end_iso", "attendee_name"],
+            "required": ["start_iso", "end_iso", "attendee_email", "attendee_name"],
         },
     },
     {
@@ -184,19 +173,14 @@ async def execute_tool(name: str, args: dict, ctx: ToolContext) -> str:
             return json.dumps({"slots": slots}, default=str)
 
         if name == "book_meeting":
-            # delivery_phone permite override del WA number para enviar el
-            # Meet link a un número distinto al que marcó. Si no viene, se
-            # usa el wa_id del caller (default).
-            delivery_phone = args.get("delivery_phone") or ctx.wa_id
             result = await book_meeting(
                 ctx.pool,
                 start_iso=args["start_iso"],
                 end_iso=args["end_iso"],
-                attendee_email=args.get("attendee_email", "") or "",
+                attendee_email=args["attendee_email"],
                 attendee_name=args["attendee_name"],
                 clinic_name=args.get("clinic_name", ""),
                 wa_id=ctx.wa_id,
-                delivery_phone=delivery_phone,
             )
             return json.dumps(result, default=str)
 
