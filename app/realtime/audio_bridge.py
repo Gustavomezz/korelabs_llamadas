@@ -286,8 +286,15 @@ class AudioBridge:
                         )
                         # 1. Cancel (lo más importante para frenar el modelo)
                         await self.openai.send({"type": "response.cancel"})
-                        # 2. Truncate (deja el contexto consistente)
-                        if self._last_assistant_item_id:
+                        # 2. Truncate — SOLO soportado en OpenAI. Grok lo lista
+                        # como Unsupported Client Event en sus docs oficiales.
+                        # Si lo mandamos a Grok, lo ignora silenciosamente y
+                        # peor: puede que el WS quede en estado raro. Skipear
+                        # para Grok preserva el barge-in funcional.
+                        if (
+                            self.openai.provider == "openai"
+                            and self._last_assistant_item_id
+                        ):
                             await self.openai.send({
                                 "type": "conversation.item.truncate",
                                 "item_id": self._last_assistant_item_id,
@@ -300,8 +307,12 @@ class AudioBridge:
                         self._response_active = False
                         self._response_audio_started_at = None
                         logger.info(
-                            "barge-in HARD: cancel+truncate+clear at %d ms item=%s call_id=%s",
-                            elapsed_ms, self._last_assistant_item_id or "<none>", self.call_id,
+                            "barge-in HARD: cancel+%s+clear at %d ms item=%s provider=%s call_id=%s",
+                            "truncate" if self.openai.provider == "openai" else "no-truncate",
+                            elapsed_ms,
+                            self._last_assistant_item_id or "<none>",
+                            self.openai.provider,
+                            self.call_id,
                         )
                 elif kind in ASSISTANT_TRANSCRIPT_DELTA_EVENTS:
                     rid = event.get("response_id") or ""
