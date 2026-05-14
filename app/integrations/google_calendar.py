@@ -22,7 +22,7 @@ from app.integrations.whatsapp import (
 )
 from app.models.conversations import save_outgoing_wa_message
 from app.models.google_tokens import get_latest_token, save_google_tokens
-from app.models.meetings import save_meeting, save_meeting_action
+from app.models.meetings import save_meeting, save_meeting_action, update_meeting_schedule
 
 
 class CalendarUnavailableError(RuntimeError):
@@ -645,6 +645,15 @@ async def reschedule_meeting(
             meet_link = ep.get("uri", "")
             break
 
+    await update_meeting_schedule(
+        pool,
+        event_id=event_id,
+        wa_id=wa_id,
+        attendee_email=attendee_email,
+        start_iso=new_start_iso,
+        end_iso=new_end_iso,
+        meet_link=meet_link,
+    )
     return {
         "success": True,
         "event_id": event_id,

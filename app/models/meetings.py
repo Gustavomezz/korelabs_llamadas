@@ -51,6 +51,44 @@ async def save_meeting(
         logger.exception("could not save meeting")
 
 
+async def update_meeting_schedule(
+    pool: asyncpg.Pool,
+    *,
+    event_id: str,
+    wa_id: str,
+    attendee_email: str,
+    start_iso: str,
+    end_iso: str,
+    meet_link: str = "",
+) -> None:
+    """Actualiza la fila local cuando Google Calendar mantiene el event_id.
+
+    Reagendar por PATCH no crea evento nuevo en Google; si no movemos la fila
+    `meetings`, el dashboard sigue mostrando la hora/contacto anterior.
+    """
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE meetings
+                SET wa_id = COALESCE(NULLIF($2, ''), wa_id),
+                    attendee_email = COALESCE(NULLIF($3, ''), attendee_email),
+                    start_time = $4,
+                    end_time = $5,
+                    meet_link = COALESCE(NULLIF($6, ''), meet_link)
+                WHERE event_id = $1
+                """,
+                event_id,
+                wa_id,
+                attendee_email,
+                _calendar_local_naive(start_iso),
+                _calendar_local_naive(end_iso),
+                meet_link,
+            )
+    except Exception:
+        logger.exception("could not update meeting schedule")
+
+
 async def save_meeting_action(
     pool: asyncpg.Pool,
     *,
