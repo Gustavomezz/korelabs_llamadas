@@ -12,10 +12,12 @@ logger = logging.getLogger("korelabs.llamadas")
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # Proveedor de voz: 'openai' (gpt-realtime-2) o 'grok' (grok-voice-think-fast-1.0).
+    # Proveedor de voz: 'grok' (grok-voice-think-fast-1.0) o 'openai' (gpt-realtime-2).
     # Cambia el endpoint, el envelope del session.update y los nombres de
     # algunos eventos. El bridge maneja ambos transparentemente.
-    voice_provider: str = "openai"
+    # Default = grok por costo (~10x más barato que OpenAI Realtime).
+    # Para fallback a OpenAI: setear VOICE_PROVIDER=openai en env vars.
+    voice_provider: str = "grok"
 
     openai_api_key: str = ""
     # gpt-realtime-2: modelo más capaz de OpenAI (GPT-5-class reasoning).
