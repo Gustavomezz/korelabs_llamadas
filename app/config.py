@@ -34,11 +34,13 @@ class Settings(BaseSettings):
     # parecida al estilo de "Kora" de OpenAI/cedar).
     grok_voice: str = "ara"
     # 'minimal' (más rápido) | 'low' | 'medium' | 'high' | 'xhigh'.
-    # 'low' es el recomendado por OpenAI para voz en producción: balance
-    # entre latencia y instruction-following. 'minimal' a veces salta pasos
-    # en flujos estructurados (greeting → main question → listen → offer).
-    # Sube a 'medium' si el bot sigue saltándose pasos del prompt.
-    openai_reasoning_effort: str = "medium"
+    # CRÍTICO: con effort 'medium' o más alto, gpt-realtime-2 hace
+    # "internal reasoning" y genera MÚLTIPLES output items por response —
+    # i.e., el modelo auto-simula varios turnos de la conversación en
+    # uno solo, incluyendo roleplayear lo que el usuario "diría". Eso
+    # produce 5 burbujas Kora seguidas y respuestas a inputs hallucinados.
+    # 'minimal' fuerza one-shot generation: una sentence y para.
+    openai_reasoning_effort: str = "minimal"
     # 'server_vad' detecta fin de turno por silencio en ms (configurable
     # abajo). 'semantic_vad' usa modelo NLU pero tiene timeout mínimo ~1-2s
     # incluso con eagerness=high. Para baja latencia preferimos server_vad
@@ -91,11 +93,12 @@ class Settings(BaseSettings):
     # mini y 1.5 lo ignoran (usan instructions inline siempre).
     openai_prompt_id: str = ""
 
-    # Limita el tamaño de las respuestas del modelo. En voz cortas son
-    # mejor (menos tiempo del bot hablando, menos latencia total por
-    # response). 400 cubre 30-40s de voz natural. Bajar a 200 fuerza
-    # respuestas muy concisas.
-    openai_max_output_tokens: int = 400
+    # CRÍTICO: límite duro para prevenir que el modelo encadene varios
+    # output items dentro de una response. Con 400 el modelo puede generar
+    # ~5 sentences seguidas (Paso 4a + 4b + roleplay del user + repetir
+    # correo + etc). Con 80 físicamente le alcanza para UNA pregunta
+    # corta y se corta. Forzar one-sentence-per-turn por límite duro.
+    openai_max_output_tokens: int = 80
 
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""

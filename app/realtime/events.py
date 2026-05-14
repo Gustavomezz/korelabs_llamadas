@@ -134,7 +134,15 @@ def session_update(
         if tools:
             session["tools"] = list(tools)
         if max_output_tokens:
-            session["max_output_tokens"] = max_output_tokens
+            # BUG CRÍTICO ENCONTRADO 2026-05-14: el campo correcto en v2
+            # Realtime API es `max_response_output_tokens`, NO
+            # `max_output_tokens`. El nombre incorrecto era IGNORADO
+            # silenciosamente por OpenAI, por eso el bot generaba
+            # respuestas larguísimas (multi-sentence) sin respetar el
+            # límite. Esto causaba que el modelo roleplayeara turnos
+            # adicionales del user dentro de su propia response.
+            # Source: community.openai.com/t/session-update-max-tokens-incorrect
+            session["max_response_output_tokens"] = max_output_tokens
         return {"type": "session.update", "session": session}
 
     # Envelope v1 (legacy)
