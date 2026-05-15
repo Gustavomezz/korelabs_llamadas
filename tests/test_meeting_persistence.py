@@ -58,5 +58,8 @@ async def test_update_meeting_schedule_keeps_caller_contact_and_local_time():
     assert args[0] == "evt_juan"
     assert args[1] == "5213139617442"
     assert args[2] == "jbarraganacevedo@gmail.com"
-    assert args[3] == datetime(2026, 5, 18, 11, 0)
-    assert args[4] == datetime(2026, 5, 18, 11, 30)
+    assert args[3] == ""
+    assert args[4] == ""
+    assert args[5] == "scheduled"
+    assert args[6] == datetime(2026, 5, 18, 11, 0)
+    assert args[7] == datetime(2026, 5, 18, 11, 30)

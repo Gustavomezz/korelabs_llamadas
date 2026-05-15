@@ -35,6 +35,18 @@ async def ensure_tenant_voice_schema(conn: asyncpg.Connection) -> None:
 
     await conn.execute(
         """
+        ALTER TABLE meetings
+            ADD COLUMN IF NOT EXISTS attendee_name VARCHAR(200),
+            ADD COLUMN IF NOT EXISTS clinic_name VARCHAR(200),
+            ADD COLUMN IF NOT EXISTS source_channel VARCHAR(30) NOT NULL DEFAULT 'voice',
+            ADD COLUMN IF NOT EXISTS status VARCHAR(30) NOT NULL DEFAULT 'scheduled';
+        CREATE INDEX IF NOT EXISTS idx_meetings_event_id ON meetings(event_id);
+        CREATE INDEX IF NOT EXISTS idx_meetings_status ON meetings(status);
+        """
+    )
+
+    await conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS calls (
             id BIGSERIAL PRIMARY KEY,
             call_sid TEXT UNIQUE NOT NULL,

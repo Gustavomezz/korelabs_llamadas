@@ -22,7 +22,12 @@ from app.integrations.whatsapp import (
 )
 from app.models.conversations import save_outgoing_wa_message
 from app.models.google_tokens import get_latest_token, save_google_tokens
-from app.models.meetings import save_meeting, save_meeting_action, update_meeting_schedule
+from app.models.meetings import (
+    mark_meeting_cancelled,
+    save_meeting,
+    save_meeting_action,
+    update_meeting_schedule,
+)
 
 
 class CalendarUnavailableError(RuntimeError):
@@ -448,6 +453,7 @@ async def book_meeting(
     await save_meeting(
         pool, wa_id=wa_id, event_id=result["id"], attendee_email=attendee_email,
         start_iso=start_iso, end_iso=end_iso, meet_link=meet_link,
+        attendee_name=attendee_name, clinic_name=clinic_name, source_channel="voice",
     )
     await save_meeting_action(
         pool, wa_id=wa_id, event_id=result["id"], action="create",
@@ -596,6 +602,7 @@ async def cancel_meeting(
         attendee_email=attendee_email,
         details=f"Original: {event.get('summary', '')} - {event.get('start', {}).get('dateTime', '')}",
     )
+    await mark_meeting_cancelled(pool, event_id=event_id)
     return {
         "success": True,
         "event_id": event_id,
