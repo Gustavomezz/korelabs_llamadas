@@ -50,7 +50,7 @@ def _build_turn_detection_v2(
         return {
             "type": "semantic_vad",
             "eagerness": eagerness,
-            "create_response": True,
+            "create_response": False,
             "interrupt_response": interrupt_response,
         }
     return {
@@ -58,7 +58,7 @@ def _build_turn_detection_v2(
         "threshold": threshold,
         "prefix_padding_ms": prefix_ms,
         "silence_duration_ms": silence_ms,
-        "create_response": True,
+        "create_response": False,
         "interrupt_response": interrupt_response,
     }
 
@@ -162,7 +162,7 @@ def session_update(
             "threshold": vad_threshold,
             "prefix_padding_ms": vad_prefix_ms,
             "silence_duration_ms": vad_silence_ms,
-            "create_response": True,
+            "create_response": False,
         },
         "temperature": temperature,
         "tool_choice": "auto",

@@ -85,6 +85,10 @@ class AudioBridge:
         # speech_started que dispare en los `post_speech_guard_ms` siguientes
         # — eso es típicamente reverb del speaker, no usuario real.
         self._last_response_done_at: float | None = None
+        # Con create_response=False en Realtime, el VAD sólo delimita turnos.
+        # Nosotros pedimos la respuesta después de una transcripción real para
+        # evitar que un falso speech_stopped haga que el bot "se conteste solo".
+        self._responded_user_items: set[str] = set()
 
     async def run(self) -> None:
         t1 = asyncio.create_task(self._pump_twilio_to_openai(), name="twilio->openai")
@@ -343,6 +347,13 @@ class AudioBridge:
                     if transcript:
                         logger.info("user said call_id=%s: %s", self.call_id, transcript[:120])
                         await self._save_transcript("user", transcript)
+                        await self._create_response_after_user_transcript(event, transcript)
+                    else:
+                        logger.info(
+                            "user transcript empty; response suppressed call_id=%s event=%s",
+                            self.call_id,
+                            kind,
+                        )
                 elif kind == "response.function_call_arguments.done":
                     asyncio.create_task(self._handle_tool_call(event))
                 elif kind == "error":
@@ -408,6 +419,34 @@ class AudioBridge:
         await self.openai.send({"type": "response.create"})
 
     # --- helpers -----------------------------------------------------------
+
+    async def _create_response_after_user_transcript(self, event: dict, transcript: str) -> None:
+        item_id = event.get("item_id") or ((event.get("item") or {}).get("id"))
+        if item_id:
+            if item_id in self._responded_user_items:
+                logger.debug(
+                    "duplicate user transcript response suppressed call_id=%s item_id=%s",
+                    self.call_id,
+                    item_id,
+                )
+                return
+            self._responded_user_items.add(item_id)
+
+        if self._response_active:
+            logger.info(
+                "response.create after user transcript suppressed; response active call_id=%s item_id=%s",
+                self.call_id,
+                item_id or "<none>",
+            )
+            return
+
+        await self.openai.send({"type": "response.create"})
+        logger.info(
+            "response.create after user transcript call_id=%s item_id=%s chars=%d",
+            self.call_id,
+            item_id or "<none>",
+            len(transcript),
+        )
 
     async def _send_twilio(self, message: str) -> None:
         if self.twilio.application_state != WebSocketState.CONNECTED:

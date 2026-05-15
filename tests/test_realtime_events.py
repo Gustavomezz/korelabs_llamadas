@@ -56,6 +56,7 @@ def test_session_update_v2_envelope_defaults():
     assert td["threshold"] == 0.7  # default: anti-falsos-positivos; barge-in se resuelve con truncate
     assert td["silence_duration_ms"] == 300
     assert td["prefix_padding_ms"] == 200
+    assert td["create_response"] is False
     assert td["interrupt_response"] is False
     # noise_reduction near_field por defecto (anti-eco línea telefónica)
     assert s["audio"]["input"]["noise_reduction"] == {"type": "near_field"}
@@ -75,6 +76,7 @@ def test_session_update_v2_can_use_semantic_vad_explicit():
     td = evt["session"]["audio"]["input"]["turn_detection"]
     assert td["type"] == "semantic_vad"
     assert td["eagerness"] == "high"
+    assert td["create_response"] is False
 
 
 def test_session_update_v2_aggressive_vad_for_low_latency():
@@ -164,6 +166,7 @@ def test_session_update_v1_envelope():
     assert s["input_audio_transcription"] == {"model": "whisper-1", "language": "es"}
     assert s["turn_detection"]["type"] == "server_vad"
     assert s["turn_detection"]["threshold"] == 0.7
+    assert s["turn_detection"]["create_response"] is False
     assert "audio" not in s
     assert "output_modalities" not in s
 
