@@ -28,6 +28,7 @@ from app.models.meetings import (
     save_meeting_action,
     update_meeting_schedule,
 )
+from app.services.contact_identity import upsert_contact_identity
 
 
 class CalendarUnavailableError(RuntimeError):
@@ -454,6 +455,13 @@ async def book_meeting(
         pool, wa_id=wa_id, event_id=result["id"], attendee_email=attendee_email,
         start_iso=start_iso, end_iso=end_iso, meet_link=meet_link,
         attendee_name=attendee_name, clinic_name=clinic_name, source_channel="voice",
+    )
+    await upsert_contact_identity(
+        pool,
+        wa_id=wa_id,
+        name=attendee_name,
+        email=attendee_email,
+        source="voice",
     )
     await save_meeting_action(
         pool, wa_id=wa_id, event_id=result["id"], action="create",

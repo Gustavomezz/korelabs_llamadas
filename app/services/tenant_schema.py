@@ -35,6 +35,27 @@ async def ensure_tenant_voice_schema(conn: asyncpg.Connection) -> None:
 
     await conn.execute(
         """
+        ALTER TABLE contacts
+            ADD COLUMN IF NOT EXISTS primary_email VARCHAR(200);
+        CREATE TABLE IF NOT EXISTS contact_identities (
+            id SERIAL PRIMARY KEY,
+            wa_id VARCHAR(20) NOT NULL,
+            identity_type VARCHAR(30) NOT NULL,
+            identity_value VARCHAR(255) NOT NULL,
+            source VARCHAR(30) NOT NULL DEFAULT 'unknown',
+            first_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (wa_id, identity_type, identity_value)
+        );
+        CREATE INDEX IF NOT EXISTS idx_contact_identities_wa_id
+            ON contact_identities(wa_id);
+        CREATE INDEX IF NOT EXISTS idx_contact_identities_value
+            ON contact_identities(identity_type, identity_value);
+        """
+    )
+
+    await conn.execute(
+        """
         ALTER TABLE meetings
             ADD COLUMN IF NOT EXISTS attendee_name VARCHAR(200),
             ADD COLUMN IF NOT EXISTS clinic_name VARCHAR(200),

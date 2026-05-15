@@ -3,18 +3,12 @@ from typing import Optional
 
 import asyncpg
 
+from app.services.contact_identity import upsert_contact_identity
+
 
 async def upsert_contact(pool: asyncpg.Pool, wa_id: str) -> None:
     """Si el contacto no existe lo crea con datos mínimos. Si existe no toca nada."""
-    async with pool.acquire() as conn:
-        await conn.execute(
-            """
-            INSERT INTO contacts (wa_id, first_contact, last_message)
-            VALUES ($1, NOW(), NOW())
-            ON CONFLICT (wa_id) DO NOTHING
-            """,
-            wa_id,
-        )
+    await upsert_contact_identity(pool, wa_id=wa_id, source="voice_call")
 
 
 async def create_call(
