@@ -1,8 +1,15 @@
-"""CRUD de tokens OAuth de Google. La lógica de refresh vive en integrations/google_calendar.py."""
+"""CRUD de tokens OAuth de Google.
+
+La tabla vive en la BD del tenant y también la usa el bot de WhatsApp. Por
+eso `access_token` y `refresh_token` se cifran/descifran con el mismo formato
+`enc:v1:` antes de tocar Google.
+"""
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import asyncpg
+
+from app.crypto_at_rest import decrypt_at_rest, encrypt_at_rest
 
 
 async def save_google_tokens(
@@ -22,7 +29,7 @@ async def save_google_tokens(
             ON CONFLICT (owner_email) DO UPDATE
             SET access_token = $2, refresh_token = $3, expires_at = $4
             """,
-            owner_email, access_token, refresh_token,
+            owner_email, encrypt_at_rest(access_token), encrypt_at_rest(refresh_token),
             expires_at.replace(tzinfo=None),
         )
 
@@ -35,4 +42,11 @@ async def get_latest_token(pool: asyncpg.Pool) -> Optional[dict]:
             FROM google_tokens ORDER BY created_at DESC LIMIT 1
             """
         )
-        return dict(row) if row else None
+    if not row:
+        return None
+    return {
+        "owner_email": row["owner_email"],
+        "access_token": decrypt_at_rest(row["access_token"]),
+        "refresh_token": decrypt_at_rest(row["refresh_token"]),
+        "expires_at": row["expires_at"],
+    }

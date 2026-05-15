@@ -67,7 +67,11 @@ def _display_slot(slot_utc: datetime, tz: ZoneInfo) -> str:
 
 async def get_valid_google_token(pool: asyncpg.Pool) -> tuple[Optional[str], Optional[str]]:
     """Retorna (access_token, owner_email). Refresca si está por expirar."""
-    row = await get_latest_token(pool)
+    try:
+        row = await get_latest_token(pool)
+    except Exception as exc:
+        logger.exception("failed to read/decrypt google token")
+        raise CalendarUnavailableError("No se pudo leer la conexión de Google Calendar") from exc
     if not row:
         return None, None
 
@@ -80,9 +84,9 @@ async def get_valid_google_token(pool: asyncpg.Pool) -> tuple[Optional[str], Opt
 
     if not (settings.google_client_id and settings.google_client_secret):
         logger.error("google client_id/secret not configured; cannot refresh token")
-        return None, None
+        raise CalendarUnavailableError("Google Calendar no tiene client_id/client_secret configurados")
 
-    logger.info("refreshing google access token")
+    logger.info("refreshing google access token owner=%s", row["owner_email"])
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.post(
             "https://oauth2.googleapis.com/token",
@@ -95,7 +99,7 @@ async def get_valid_google_token(pool: asyncpg.Pool) -> tuple[Optional[str], Opt
         )
         if response.status_code != 200:
             logger.error("failed to refresh google token: %s", response.text)
-            return None, None
+            raise CalendarUnavailableError("Google Calendar requiere reconexión OAuth")
         data = response.json()
         new_access = data["access_token"]
         expires_in = data.get("expires_in", 3600)
@@ -120,7 +124,7 @@ async def google_calendar_request(
     access_token, _ = await get_valid_google_token(pool)
     if not access_token:
         logger.error("no valid google token available")
-        return None
+        raise CalendarUnavailableError("No hay token válido de Google Calendar")
 
     url = f"https://www.googleapis.com/calendar/v3{path}"
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
@@ -550,7 +554,7 @@ async def list_user_meetings(
     }
     result = await google_calendar_request(pool, "GET", "/calendars/primary/events", params=params)
     if not result:
-        return []
+        raise CalendarUnavailableError("No se pudieron consultar citas en Google Calendar")
 
     needle = attendee_email.lower().strip()
     matching = []
